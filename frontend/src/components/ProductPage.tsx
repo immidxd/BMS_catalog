@@ -106,13 +106,18 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
 
   if (!product) return <div className="product-page"><div className="empty">Завантаження…</div></div>;
 
-  // Назва = тип + модель (напр. «Кросівки Lunari»); тип більше не окремий рядок
-  const titleText = [product.typename, product.model].filter(Boolean).join(' ') || 'Без назви';
+  // Назва = бренд + модель (напр. «Ecco Street 720»)
+  const titleText = [product.brandname, product.model].filter(Boolean).join(' ')
+    || product.typename || 'Без назви';
+  // Підзаголовок = Тип / Стать (напр. «Кросівки / Жіночі»); стать — у формі прикметника
+  const GENDER_LABEL: Record<string, string> = { 'Жіноча': 'Жіночі', 'Чоловіча': 'Чоловічі', 'Унісекс': 'Унісекс' };
+  const genderLabel = product.gendername && !['Невідомо', 'Невизначено'].includes(product.gendername)
+    ? (GENDER_LABEL[product.gendername] ?? product.gendername) : null;
+  const subtitle = [product.typename, genderLabel].filter(Boolean).join(' / ');
 
   const specs: Array<[string, string | null]> = [
     ['Підвид', product.subtypename],
     ['Стиль', product.stylename],
-    ['Стать', product.gendername],
     ['Колір', product.colorname],
     ['Стан', product.conditionname],
     ['Сезон', product.season],
@@ -172,7 +177,7 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
       <div className="product-side">
       <div className="product-info">
         <div className="product-header">
-          {product.brandname && <div className="product-brand">{product.brandname}</div>}
+          {subtitle && <div className="product-brand">{subtitle}</div>}
           <h1 className="product-title">{titleText}</h1>
           <div>
             <span className="price product-price">{formatPrice(product.price)}</span>

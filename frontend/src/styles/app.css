@@ -582,7 +582,8 @@ button {
   z-index: 3;
 }
 
-/* Номер товару — мінімалістичний піл у кутку галереї, клік копіює */
+/* Номер товару — мінімалістичний піл у кутку галереї, клік копіює.
+   Моб.: справа (не конфліктує з кнопкою «назад»); десктоп: зліва (див. медіазапит). */
 .number-pill {
   position: absolute;
   top: var(--space-3);
@@ -732,21 +733,18 @@ button {
   }
   .product-sheet .gallery-track { flex: 1; min-height: 0; }
   .product-sheet .gallery-slide { aspect-ratio: auto; height: 100%; background: #fafafa; }
-  .product-sheet .gallery-slide img { object-fit: contain; }
-  .product-sheet .gallery-dots { background: transparent; position: relative; z-index: 3; }
-  /* Плавна ростушовка зверху/знизу фото — мʼякий перехід у тло модалки */
-  .product-sheet .gallery::before,
-  .product-sheet .gallery::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    height: 64px;
-    pointer-events: none;
-    z-index: 2;
+  /* Розтушовка КРАЇВ самого фото — верх/низ квадрата мʼяко зливаються з панеллю */
+  .product-sheet .gallery-slide img {
+    object-fit: contain;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 9%, #000 91%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0, #000 9%, #000 91%, transparent 100%);
   }
-  .product-sheet .gallery::before { top: 0; background: linear-gradient(to bottom, var(--surface), transparent); }
-  .product-sheet .gallery::after { bottom: 0; background: linear-gradient(to top, var(--surface), transparent); }
+  /* Номер — зліва на десктопі (модал відступає від краю, кнопка «назад» не заважає) */
+  .product-sheet .number-pill { left: var(--space-3); right: auto; }
+  /* Крапки на світлій панелі — фіксований темний колір (незалежно від теми) */
+  .product-sheet .gallery-dots { background: transparent; position: relative; z-index: 3; }
+  .product-sheet .dot::before { background: rgba(0, 0, 0, 0.22); }
+  .product-sheet .dot.active::before { background: rgba(0, 0, 0, 0.7); }
   /* Стрілки навігації галереї */
   .gallery-arrow {
     display: flex;
