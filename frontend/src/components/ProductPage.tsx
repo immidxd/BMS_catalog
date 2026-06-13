@@ -6,8 +6,16 @@ import { contactSeller, haptic, isInTelegram, showBackButton } from '../telegram
 type Props = { productId: number; sellerUsername: string; onBack: () => void };
 
 const KIND_LABELS: Record<string, string> = { real: 'реальне фото', defect: 'нюанс' };
+// Матеріали показуємо саме в цьому порядку (тільки наявні позиції)
+const MATERIAL_ORDER = ['upper', 'middle', 'membrane', 'lining', 'insole', 'midsole', 'sole'];
 const MATERIAL_LABELS: Record<string, string> = {
-  upper: 'Верх', middle: 'Проміжний шар', insole: 'Устілка', sole: 'Підошва', membrane: 'Мембрана',
+  upper: 'Верх',
+  middle: 'Середина',
+  membrane: 'Мембрана',
+  lining: 'Підкладка',
+  insole: 'Устілка',
+  midsole: 'Проміжна підошва',
+  sole: 'Підошва',
 };
 
 // "10–11 см" / "10 см" / null з пари min/max
@@ -133,9 +141,9 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
   const variantLabel = (v: typeof product.size_variants[number]): string =>
     v.sizeeu ? `${v.sizeeu} EU` : v.size_letter ?? (v.measurementscm ? `${v.measurementscm} см` : 'один розмір');
 
-  const materialRows = Object.entries(product.materials)
-    .filter(([position]) => MATERIAL_LABELS[position])
-    .map(([position, names]) => [MATERIAL_LABELS[position], cap(names.join(', '))] as const);
+  const materialRows = MATERIAL_ORDER
+    .filter((position) => product.materials[position]?.length)
+    .map((position) => [MATERIAL_LABELS[position], cap(product.materials[position].join(', '))] as const);
 
   return (
     <div className="product-page" onClick={handleBackdrop}>
@@ -206,7 +214,7 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
         {product.description && (
           <div className="detail-card">
             <h3>Опис</h3>
-            <p className="description">{product.description}</p>
+            <p className="description">{cap(product.description)}</p>
           </div>
         )}
 
