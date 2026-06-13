@@ -17,10 +17,15 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
   return `${min ?? max} см`;
 };
 
+// Стандартизована капіталізація значень характеристик (перша літера велика)
+const cap = (s: string | null): string | null =>
+  s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+
 export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [error, setError] = useState(false);
   const [slide, setSlide] = useState(0);
+  const [copied, setCopied] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => showBackButton(onBack), [onBack]);
@@ -50,9 +55,41 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
     if (index !== slide) setSlide(index);
   };
 
+  // Навігація галереї (стрілки/крапки) з циклом
+  const goToSlide = (i: number) => {
+    const total = product?.images.length ?? 0;
+    if (total === 0) return;
+    const idx = (i + total) % total;
+    setSlide(idx);
+    trackRef.current?.scrollTo({ left: idx * (trackRef.current?.clientWidth ?? 0), behavior: 'smooth' });
+  };
+
   const handleContact = () => {
     haptic('medium');
     if (product) contactSeller(sellerUsername, product.productnumber);
+  };
+
+  // Копіювання номера товару в буфер обміну (з fallback для обмежених контекстів)
+  const handleCopyNumber = () => {
+    if (!product) return;
+    const text = product.productnumber;
+    const done = () => { haptic('light'); setCopied(true); setTimeout(() => setCopied(false), 1500); };
+    const fallback = () => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch { /* ignore */ }
+      document.body.removeChild(ta);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => { fallback(); done(); });
+    } else {
+      fallback();
+      done();
+    }
   };
 
   if (error) {
@@ -69,9 +106,11 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
 
   if (!product) return <div className="product-page"><div className="empty">Завантаження…</div></div>;
 
+  // Назва = тип + модель (напр. «Кросівки Lunari»); тип більше не окремий рядок
+  const titleText = [product.typename, product.model].filter(Boolean).join(' ') || 'Без назви';
+
   const specs: Array<[string, string | null]> = [
-    ['Номер', product.productnumber],
-    ['Тип', [product.typename, product.subtypename].filter(Boolean).join(' / ') || null],
+    ['Підвид', product.subtypename],
     ['Стиль', product.stylename],
     ['Стать', product.gendername],
     ['Колір', product.colorname],
@@ -91,7 +130,7 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
 
   const materialRows = Object.entries(product.materials)
     .filter(([position]) => MATERIAL_LABELS[position])
-    .map(([position, names]) => [MATERIAL_LABELS[position], names.join(', ')] as const);
+    .map(([position, names]) => [MATERIAL_LABELS[position], cap(names.join(', '))] as const);
 
   return (
     <div className="product-page" onClick={handleBackdrop}>
@@ -99,29 +138,34 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
 
       <div className="product-sheet">
       <div className="gallery">
+        {/* Номер товару — мінімалістично в кутку, клік копіює в буфер */}
+        <button type="button" className="number-pill" onClick={handleCopyNumber}
+          title="Скопіювати номер">
+          {copied ? 'Скопійовано ✓' : product.productnumber}
+        </button>
         <div className="gallery-track" ref={trackRef} onScroll={handleScroll}>
           {product.images.length > 0 ? product.images.map((img) => (
             <div className="gallery-slide" key={img.url}>
-              <img src={img.url} alt={product.model ?? product.productnumber} loading="lazy" />
+              <img src={img.url} alt={titleText} loading="lazy" />
               {KIND_LABELS[img.kind] && <span className="kind-tag">{KIND_LABELS[img.kind]}</span>}
             </div>
           )) : <div className="gallery-slide">Без фото</div>}
         </div>
         {product.images.length > 1 && (
-          <div className="gallery-dots">
-            {product.images.map((img, i) => (
-              <button
-                type="button"
-                key={img.url}
-                className={`dot${i === slide ? ' active' : ''}`}
-                aria-label={`Фото ${i + 1}`}
-                onClick={() => {
-                  setSlide(i);
-                  trackRef.current?.scrollTo({ left: i * trackRef.current.clientWidth, behavior: 'smooth' });
-                }}
-              />
-            ))}
-          </div>
+          <>
+            <button type="button" className="gallery-arrow prev" aria-label="Попереднє фото"
+              onClick={() => goToSlide(slide - 1)}>‹</button>
+            <button type="button" className="gallery-arrow next" aria-label="Наступне фото"
+              onClick={() => goToSlide(slide + 1)}>›</button>
+            <div className="gallery-dots">
+              {product.images.map((img, i) => (
+                <button type="button" key={img.url}
+                  className={`dot${i === slide ? ' active' : ''}`}
+                  aria-label={`Фото ${i + 1}`}
+                  onClick={() => goToSlide(i)} />
+              ))}
+            </div>
+          </>
         )}
       </div>
 
@@ -129,7 +173,7 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
       <div className="product-info">
         <div className="product-header">
           {product.brandname && <div className="product-brand">{product.brandname}</div>}
-          <h1 className="product-title">{product.model ?? product.typename ?? 'Без назви'}</h1>
+          <h1 className="product-title">{titleText}</h1>
           <div>
             <span className="price product-price">{formatPrice(product.price)}</span>
             {product.oldprice && product.oldprice > product.price && (
@@ -166,7 +210,7 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
           {specs.filter(([, value]) => value).map(([key, value]) => (
             <div className="spec-row" key={key}>
               <span className="spec-key">{key}</span>
-              <span className="spec-val">{value}</span>
+              <span className="spec-val">{cap(value)}</span>
             </div>
           ))}
         </div>
@@ -187,7 +231,7 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
       {sellerUsername && (
         <div className="contact-bar">
           <button type="button" className="btn-primary" onClick={handleContact}>
-            Написати продавцю
+            Замовити
           </button>
         </div>
       )}

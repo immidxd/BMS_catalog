@@ -579,7 +579,29 @@ button {
   background: rgba(0, 0, 0, 0.55);
   color: #ffffff;
   font-size: var(--text-xs);
+  z-index: 3;
 }
+
+/* Номер товару — мінімалістичний піл у кутку галереї, клік копіює */
+.number-pill {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 4;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.40);
+  color: #ffffff;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.3px;
+  backdrop-filter: blur(4px);
+  transition: background var(--dur-fast) var(--ease);
+}
+.number-pill:hover { background: rgba(0, 0, 0, 0.6); }
+
+/* Стрілки галереї — лише десктоп (на моб. — свайп) */
+.gallery-arrow { display: none; }
 
 .gallery-dots {
   display: flex;
@@ -711,18 +733,58 @@ button {
   .product-sheet .gallery-track { flex: 1; min-height: 0; }
   .product-sheet .gallery-slide { aspect-ratio: auto; height: 100%; background: #fafafa; }
   .product-sheet .gallery-slide img { object-fit: contain; }
-  .product-sheet .gallery-dots { background: #fafafa; }
+  .product-sheet .gallery-dots { background: transparent; position: relative; z-index: 3; }
+  /* Плавна ростушовка зверху/знизу фото — мʼякий перехід у тло модалки */
+  .product-sheet .gallery::before,
+  .product-sheet .gallery::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 64px;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .product-sheet .gallery::before { top: 0; background: linear-gradient(to bottom, var(--surface), transparent); }
+  .product-sheet .gallery::after { bottom: 0; background: linear-gradient(to top, var(--surface), transparent); }
+  /* Стрілки навігації галереї */
+  .gallery-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 4;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-full);
+    background: rgba(0, 0, 0, 0.4);
+    color: #ffffff;
+    font-size: 22px;
+    line-height: 1;
+    backdrop-filter: blur(4px);
+    opacity: 0;
+    transition: opacity var(--dur-med) var(--ease), background var(--dur-fast) var(--ease);
+  }
+  .product-sheet .gallery:hover .gallery-arrow { opacity: 1; }
+  .gallery-arrow:hover { background: rgba(0, 0, 0, 0.62); }
+  .gallery-arrow.prev { left: var(--space-3); }
+  .gallery-arrow.next { right: var(--space-3); }
   /* Права панель — власна прокрутка */
   .product-side {
     height: 100%;
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
-  .product-sheet .product-info { padding: var(--space-6); }
-  /* Кнопка контакту — у потоці правої колонки, не фіксована */
+  .product-sheet .product-info { padding: var(--space-6); flex: 1; }
+  /* Кнопка «Замовити» — липка внизу правої колонки, завжди на видноті */
   .product-sheet .contact-bar {
-    position: static;
-    border-top: none;
-    background: transparent;
-    padding: 0 var(--space-6) var(--space-6);
+    position: sticky;
+    bottom: 0;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    padding: var(--space-3) var(--space-6);
   }
 }
