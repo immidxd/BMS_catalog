@@ -724,24 +724,32 @@ button {
     display: grid;
     grid-template-columns: 1fr 1fr;
   }
-  /* Ліва панель — світла (фото на білому), заповнює всю висоту, фото по центру */
+  /* Ліва панель — БІЛИЙ фон (точно як у фото, щоб не було шва) */
   .product-sheet .gallery {
     height: 100%;
-    background: #fafafa;
+    background: #ffffff;
     display: flex;
     flex-direction: column;
   }
   .product-sheet .gallery-track { flex: 1; min-height: 0; }
-  .product-sheet .gallery-slide { aspect-ratio: auto; height: 100%; background: #fafafa; }
-  /* Розтушовка КРАЇВ самого фото — верх/низ квадрата мʼяко зливаються з панеллю */
-  .product-sheet .gallery-slide img {
-    object-fit: contain;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 9%, #000 91%, transparent 100%);
-    mask-image: linear-gradient(to bottom, transparent 0, #000 9%, #000 91%, transparent 100%);
+  .product-sheet .gallery-slide { aspect-ratio: auto; height: 100%; background: #ffffff; }
+  .product-sheet .gallery-slide img { object-fit: contain; }
+  /* Розтушовка верху/низу: краї фото плавно зливаються з білим фоном галереї */
+  .product-sheet .gallery::before,
+  .product-sheet .gallery::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 110px;
+    pointer-events: none;
+    z-index: 2;
   }
+  .product-sheet .gallery::before { top: 0; background: linear-gradient(to bottom, #ffffff 18%, transparent); }
+  .product-sheet .gallery::after { bottom: 0; background: linear-gradient(to top, #ffffff 18%, transparent); }
   /* Номер — зліва на десктопі (модал відступає від краю, кнопка «назад» не заважає) */
   .product-sheet .number-pill { left: var(--space-3); right: auto; }
-  /* Крапки на світлій панелі — фіксований темний колір (незалежно від теми) */
+  /* Крапки на білій панелі — фіксований темний колір (незалежно від теми) */
   .product-sheet .gallery-dots { background: transparent; position: relative; z-index: 3; }
   .product-sheet .dot::before { background: rgba(0, 0, 0, 0.22); }
   .product-sheet .dot.active::before { background: rgba(0, 0, 0, 0.7); }
