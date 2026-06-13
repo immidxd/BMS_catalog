@@ -190,7 +190,7 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
             <Toggle
               label="Тільки з фото"
               checked={Boolean(draft.has_photo)}
-              onToggle={() => { hapticSelect(); setDraft((d) => ({ ...d, has_photo: d.has_photo ? undefined : true })); }}
+              onToggle={() => { hapticSelect(); setDraft((d) => ({ ...d, has_photo: !d.has_photo })); }}
             />
           )}
 
