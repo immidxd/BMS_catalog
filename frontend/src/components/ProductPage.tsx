@@ -110,7 +110,16 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
         {product.images.length > 1 && (
           <div className="gallery-dots">
             {product.images.map((img, i) => (
-              <span key={img.url} className={`dot${i === slide ? ' active' : ''}`} />
+              <button
+                type="button"
+                key={img.url}
+                className={`dot${i === slide ? ' active' : ''}`}
+                aria-label={`Фото ${i + 1}`}
+                onClick={() => {
+                  setSlide(i);
+                  trackRef.current?.scrollTo({ left: i * trackRef.current.clientWidth, behavior: 'smooth' });
+                }}
+              />
             ))}
           </div>
         )}

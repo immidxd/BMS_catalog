@@ -584,19 +584,29 @@ button {
 .gallery-dots {
   display: flex;
   justify-content: center;
-  gap: 5px;
+  gap: 2px;
   padding: var(--space-2) 0;
   background: var(--surface);
 }
 
+/* Крапка-кнопка: видимий індикатор 6px усередині, але більший клік-таргет */
 .dot {
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dot::before {
+  content: '';
   width: 6px;
   height: 6px;
   border-radius: var(--radius-full);
   background: var(--fg-faint);
   transition: all var(--dur-fast) var(--ease);
 }
-.dot.active { background: var(--fg); width: 16px; }
+.dot.active::before { background: var(--fg); width: 16px; }
 
 .product-info { padding: var(--space-4); }
 
@@ -672,32 +682,39 @@ button {
 
 .load-sentinel { height: 1px; }
 
-/* ── Десктоп: картка товару як центрований модал (без гігантської картинки) ─ */
+/* ── Десктоп: картка товару — центрований модал фіксованої висоти ────────── */
 @media (min-width: 768px) {
   .product-page {
-    background: rgba(0, 0, 0, 0.55);
+    background: rgba(0, 0, 0, 0.6);
     padding: 0;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
+    display: grid;
+    place-items: center;   /* надійне центрування по обох осях */
   }
   .product-sheet {
-    width: min(940px, 92vw);
-    margin: 40px 0;
+    width: min(960px, 94vw);
+    height: min(78vh, 680px);   /* фіксована висота → нема порожнечі, центрується */
+    margin: 0;
     background: var(--surface);
     border-radius: var(--radius-md);
     overflow: hidden;
     box-shadow: var(--shadow-lg);
     display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-    align-items: start;
+    grid-template-columns: 1fr 1fr;
   }
-  /* Галерея — ліва колонка, не вища за вікно; решта фото гортається свайпом/крапками */
-  .product-sheet .gallery { position: sticky; top: 0; }
-  .product-sheet .gallery-slide { aspect-ratio: 1; max-height: calc(100vh - 80px); }
-  /* Права колонка з власною прокруткою */
+  /* Ліва панель — світла (фото на білому), заповнює всю висоту, фото по центру */
+  .product-sheet .gallery {
+    height: 100%;
+    background: #fafafa;
+    display: flex;
+    flex-direction: column;
+  }
+  .product-sheet .gallery-track { flex: 1; min-height: 0; }
+  .product-sheet .gallery-slide { aspect-ratio: auto; height: 100%; background: #fafafa; }
+  .product-sheet .gallery-slide img { object-fit: contain; }
+  .product-sheet .gallery-dots { background: #fafafa; }
+  /* Права панель — власна прокрутка */
   .product-side {
-    max-height: calc(100vh - 80px);
+    height: 100%;
     overflow-y: auto;
   }
   .product-sheet .product-info { padding: var(--space-6); }
