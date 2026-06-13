@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Середовище та секрети
+.env
+
+# macOS
+.DS_Store
+
+# Логи
+*.log
+
+# Разові бекапи БД
+*_backup_*.sql

@@ -1,0 +1,88 @@
+/* ==========================================================================
+   TG Shop — дизайн-токени.
+   База — BMS Design System (мінімалістичний монохром), поверх — змінні теми
+   Telegram (--tg-theme-*), якщо застосунок відкрито всередині Telegram.
+   Перемикання теми: data-theme="dark" на <html>.
+   ========================================================================== */
+
+:root {
+  /* ---------- Бренд (монохром, як у BMS) ---------- */
+  --primary:       var(--tg-theme-text-color, #111111);
+  --on-primary:    var(--tg-theme-bg-color, #ffffff);
+
+  /* ---------- Поверхні ---------- */
+  --bg:            var(--tg-theme-secondary-bg-color, #f5f5f5);
+  --surface:       var(--tg-theme-bg-color, #ffffff);
+  --surface-alt:   #f9f9f9;
+  --hover:         #eaeaea;
+
+  /* ---------- Текст ---------- */
+  --fg:            var(--tg-theme-text-color, #333333);
+  --fg-muted:      #555555;
+  --fg-subtle:     var(--tg-theme-hint-color, #8c8c8c);
+  --fg-faint:      #bfbfbf;
+  --fg-disabled:   #999999;
+
+  /* ---------- Межі ---------- */
+  --border:        #e0e0e0;
+
+  /* ---------- Семантика (з BMS) ---------- */
+  --success:       #52c41a;   /* ціна */
+  --danger:        #f5222d;
+
+  /* ---------- Тіні ---------- */
+  --shadow-sm:     0 2px 4px rgba(0, 0, 0, 0.10);
+  --shadow-md:     0 4px 6px -1px rgb(0 0 0 / 0.10), 0 2px 4px -2px rgb(0 0 0 / 0.10);
+  --shadow-lg:     0 -4px 24px rgba(0, 0, 0, 0.18);
+
+  /* ---------- Радіуси ---------- */
+  --radius-sm:     6px;
+  --radius-md:     12px;   /* картки */
+  --radius-full:   9999px;
+
+  /* ---------- Відступи (4-pt base) ---------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+
+  /* ---------- Анімації ---------- */
+  --dur-fast: 150ms;
+  --dur-med:  200ms;
+  --dur-slow: 300ms;
+  --ease:     ease-in-out;
+
+  /* ---------- Типографіка — системний стек, без вебшрифтів ---------- */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto',
+               'Helvetica Neue', sans-serif;
+  --text-xs:   12px;
+  --text-sm:   13px;
+  --text-base: 14px;
+  --text-md:   16px;
+  --text-lg:   18px;
+  --text-xl:   20px;
+}
+
+/* ---------- Темна тема ---------- */
+[data-theme='dark'] {
+  --primary:     var(--tg-theme-text-color, #ffffff);
+  --on-primary:  var(--tg-theme-bg-color, #1e1e1e);
+
+  --bg:          var(--tg-theme-secondary-bg-color, #2d2d2d);
+  --surface:     var(--tg-theme-bg-color, #1e1e1e);
+  --surface-alt: #252525;
+  --hover:       #3a3a3a;
+
+  --fg:          var(--tg-theme-text-color, #e4e4e4);
+  --fg-muted:    #c7c7c7;
+  --fg-subtle:   var(--tg-theme-hint-color, #9a9a9a);
+  --fg-faint:    #707070;
+  --fg-disabled: #808080;
+
+  --border:      #444444;
+
+  --shadow-sm:   0 2px 4px rgba(0, 0, 0, 0.40);
+  --shadow-md:   0 4px 8px rgba(0, 0, 0, 0.45);
+  --shadow-lg:   0 -4px 24px rgba(0, 0, 0, 0.55);
+}
