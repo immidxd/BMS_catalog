@@ -33,6 +33,7 @@ type Props = {
   query: CatalogQuery;
   total: number;
   isAdmin: boolean;   // тумблер «з фото» бачить лише адмін
+  initialFacets: Facets | null;   // фасети наперед (з App) — щоб не було стрибка
   onApply: (query: CatalogQuery) => void;
   onClose: () => void;
 };
@@ -44,11 +45,6 @@ type StrKey = 'seasons' | 'size_letters';
 // продажами), щоб не перенавантажувати; решту користувач знаходить пошуком.
 const CHIP_DEFAULT = 6;
 const CHIP_LIMIT = 40;   // максимум під час активного пошуку в секції
-// Запасна повна сітка цілих EU 14..53 — показуємо до першої відповіді фасета.
-// Далі сітка ДИНАМІЧНА: лише розміри, реально наявні в поточному наборі
-// (fetchAvailableSizes). Чіп цілого ловить і дроби (39.5→39), і діапазони
-// (39-40 → 39 і 40) — зіставлення на боці backend.
-const EU_SIZES_FALLBACK = Array.from({ length: 53 - 14 + 1 }, (_, i) => 14 + i);
 
 // Перемикання значення у multi-select масиві (undefined коли порожньо)
 const toggleValue = <T,>(list: T[] | undefined, value: T): T[] | undefined => {
@@ -134,15 +130,15 @@ const SearchableChips = ({ options, selectedIds, query, onQueryChange, onToggle,
   );
 };
 
-export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }: Props) => {
+export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onApply, onClose }: Props) => {
   const [draft, setDraft] = useState<CatalogQuery>(query);
   const [draftTotal, setDraftTotal] = useState(total);
   // Розмір/Колір/Стать — розгорнуті за замовчуванням; решта — за кліком
   const [openSections, setOpenSections] = useState<Set<string>>(() => new Set(['size', 'color', 'gender']));
   const [typeQuery, setTypeQuery] = useState('');
   const [brandQuery, setBrandQuery] = useState('');
-  // Динамічні фасети: null = ще не завантажено (показуємо запасні дані).
-  const [facets, setFacets] = useState<Facets | null>(null);
+  // Динамічні фасети: стартуємо з переданих наперед (App) — без стрибка.
+  const [facets, setFacets] = useState<Facets | null>(initialFacets);
   const debouncedDraft = useDebounced(draft);
 
   // Живий підрахунок: скільки товарів покаже чернетка фільтрів
@@ -163,11 +159,11 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
     return () => { cancelled = true; };
   }, [debouncedDraft]);
 
-  // Сітка EU: наявні розміри (або повна, поки не завантажено) + завжди вже
-  // вибрані (щоб їх можна було зняти, навіть якщо фасет їх більше не містить).
+  // Сітка EU: лише реально наявні розміри (без повної запасної сітки — щоб не
+  // було стрибка) + завжди вже вибрані. null = фасети ще вантажаться.
   const sizesToShow = useMemo(() => {
-    const base = facets?.eu ?? EU_SIZES_FALLBACK;
-    const set = new Set<number>([...base, ...(draft.eu_sizes ?? [])]);
+    if (!facets) return null;
+    const set = new Set<number>([...facets.eu, ...(draft.eu_sizes ?? [])]);
     return Array.from(set).sort((a, b) => a - b);
   }, [facets, draft.eu_sizes]);
 
@@ -276,7 +272,11 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
           <Accordion title="Розмір" badge={sizeBadge} summary={sizeSummary}
             open={openSections.has('size')} onToggle={() => toggleSection('size')}>
             <div className="filter-label">EU</div>
-            {sizesToShow.length > 0 ? (
+            {sizesToShow === null ? (
+              <div className="size-grid">
+                {Array.from({ length: 15 }, (_, i) => <div key={i} className="size-chip skeleton" />)}
+              </div>
+            ) : sizesToShow.length > 0 ? (
               <div className="size-grid">
                 {sizesToShow.map((n) => (
                   <button type="button" key={n}

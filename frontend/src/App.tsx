@@ -1,6 +1,6 @@
 // TG Shop — каталог: пошук, фільтри, сітка товарів, сторінка товару
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CatalogQuery, FilterOptions, fetchConfig, fetchFilters } from './api';
+import { CatalogQuery, Facets, FilterOptions, fetchConfig, fetchFacets, fetchFilters } from './api';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
 import { ProductCard, SkeletonCard } from './components/ProductCard';
 import { ProductPage } from './components/ProductPage';
@@ -29,6 +29,9 @@ export const App = () => {
   const [sellerUsername, setSellerUsername] = useState('');
   const [shopName, setShopName] = useState('Каталог');
   const [isAdmin, setIsAdmin] = useState(hasAdminParam);
+  // Фасети наперед: щоб лист фільтрів одразу показував коректні (звужені)
+  // розміри/стать/колір без стрибка «повна сітка → звужена».
+  const [facets, setFacets] = useState<Facets | null>(null);
 
   const debouncedSearch = useDebounced(search);
   // Мемоізація обов'язкова: новий об'єкт на кожен рендер зациклив би useCatalog
@@ -37,6 +40,13 @@ export const App = () => {
     [query, debouncedSearch],
   );
   const { items, total, isLoading, error, loadMore, retry } = useCatalog(effectiveQuery);
+
+  // Тримаємо фасети актуальними для застосованого запиту (для миттєвого листа)
+  useEffect(() => {
+    let cancelled = false;
+    fetchFacets(effectiveQuery).then((f) => { if (!cancelled) setFacets(f); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [effectiveQuery]);
 
   useEffect(() => {
     fetchFilters().then(setFilterOptions).catch(() => {});
@@ -153,6 +163,7 @@ export const App = () => {
           query={effectiveQuery}
           total={total}
           isAdmin={isAdmin}
+          initialFacets={facets}
           onApply={(next) => setQuery({ ...next, search: undefined, sort: query.sort })}
           onClose={() => setIsSheetOpen(false)}
         />
