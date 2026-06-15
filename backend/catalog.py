@@ -414,16 +414,18 @@ async def get_facets(
     вибірними (вибране можна зняти, навіть якщо фасет його вже не містить)."""
 
     def _where(skip: str) -> tuple[str, Dict[str, Any]]:
+        # «size» виключає весь розмірний фасет (EU + буквений)
         return _build_filters(
             search, typeids, subtypeids, brandids,
             None if skip == "gender" else genderids,
             None if skip == "color" else color_group_ids,
             conditionids, seasons,
             None if skip == "size" else eu_sizes,
-            size_letters, min_price, max_price, min_cm, max_cm, has_photo,
+            None if skip == "size" else size_letters,
+            min_price, max_price, min_cm, max_cm, has_photo,
         )
 
-    # — EU-розміри (виключаємо власний розмірний фільтр) —
+    # — Розмір: EU + буквений (виключаємо власний розмірний фільтр) —
     sw, sp = _where("size")
     size_rows = db.execute(text(f"""
         SELECT DISTINCT p.sizeeu {_FULL_JOINS}
@@ -433,6 +435,13 @@ async def get_facets(
     for value in size_rows:
         wholes.update(_sizeeu_to_wholes(value))
     eu = sorted(w for w in wholes if w >= 14)
+
+    letter_rows = db.execute(text(f"""
+        SELECT DISTINCT p.size_letter {_FULL_JOINS}
+        WHERE {_AVAILABLE_WHERE} {sw} AND p.size_letter IS NOT NULL AND p.size_letter <> ''
+    """), sp).scalars().all()
+    _LETTER_ORDER = {"XS": 0, "S": 1, "M": 2, "L": 3, "XL": 4, "XXL": 5, "XXXL": 6, "XXXXXXL": 9}
+    size_letters_avail = sorted(letter_rows, key=lambda x: _LETTER_ORDER.get(x, 99))
 
     # — Стать (виключаємо власний фільтр статі) —
     gw, gp = _where("gender")
@@ -456,6 +465,7 @@ async def get_facets(
 
     return {
         "eu": eu,
+        "size_letters": size_letters_avail,
         "genders": [dict(r) for r in gender_rows],
         "color_groups": [dict(r) for r in color_rows],
     }

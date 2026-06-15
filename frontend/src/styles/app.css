@@ -444,15 +444,22 @@ button {
 .acc-chevron { flex-shrink: 0; transition: transform var(--dur-med) var(--ease); }
 .acc-chevron.open { transform: rotate(180deg); }
 
-/* Плавне розгортання без знання висоти (grid 0fr→1fr) */
+/* Плавне розгортання без знання висоти (grid 0fr→1fr) + мʼякий fade.
+   cubic-bezier(.4,0,.2,1) — стандарт Material, плавно на всіх пристроях. */
 .acc-body {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows var(--dur-med) var(--ease);
+  transition: grid-template-rows 280ms cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: grid-template-rows;
 }
 .acc-body.open { grid-template-rows: 1fr; }
-.acc-inner { overflow: hidden; }
-.acc-body.open .acc-inner { padding-bottom: var(--space-3); }
+.acc-inner {
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.acc-body.open .acc-inner { opacity: 1; padding-bottom: var(--space-3); }
+.acc-chevron { transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1); }
 
 /* ── Сітка розмірів EU ──────────────────────────────────────────────────── */
 .size-grid {
@@ -490,11 +497,11 @@ button {
 .gender-chip:active { transform: scale(0.96); }
 .gender-chip:hover { color: var(--fg); border-color: var(--fg-faint); }
 /* Рожевий (жін), синій (чол), нейтральний (унісекс) */
-.gender-chip.female.active { background: #fdf2f8; color: #db2777; border-color: #f9a8d4; }
-.gender-chip.male.active   { background: #eff6ff; color: #2563eb; border-color: #93c5fd; }
+.gender-chip.female.active { background: #fce7f3; color: #db2777; border-color: #ec4899; }
+.gender-chip.male.active   { background: #dbeafe; color: #2563eb; border-color: #3b82f6; }
 .gender-chip.unisex.active { background: var(--hover); color: var(--fg); border-color: var(--fg-subtle); }
-[data-theme='dark'] .gender-chip.female.active { background: rgba(190, 24, 93, 0.22); color: #f9a8d4; border-color: #be185d; }
-[data-theme='dark'] .gender-chip.male.active   { background: rgba(30, 58, 138, 0.32); color: #93c5fd; border-color: #1e40af; }
+[data-theme='dark'] .gender-chip.female.active { background: rgba(219, 39, 119, 0.28); color: #f9a8d4; border-color: #db2777; }
+[data-theme='dark'] .gender-chip.male.active   { background: rgba(37, 99, 235, 0.34); color: #93c5fd; border-color: #3b82f6; }
 
 /* ── Пошук у секції (Тип/Бренд) ─────────────────────────────────────────── */
 .chip-search {
@@ -525,6 +532,36 @@ button {
   border: 1px solid var(--border);
   display: inline-block;
 }
+
+/* ── Кольори — квадратні зразки з лічильником (як у BMS) ─────────────────── */
+.color-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-2);
+}
+.color-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.color-swatch {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.10);
+  transition: box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+[data-theme='dark'] .color-swatch { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16); }
+.color-swatch.white { box-shadow: 0 0 0 1px var(--border); }
+.color-swatch:hover { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.30); }
+.color-swatch:active { transform: scale(0.93); }
+/* Активний — кільце кольору бренду з відступом */
+.color-swatch.active,
+[data-theme='dark'] .color-swatch.active {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--primary);
+}
+.color-count {
+  font-size: 11px;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+.color-count.active { color: var(--fg); font-weight: 600; }
 
 .price-inputs { display: flex; gap: var(--space-2); align-items: center; }
 .price-inputs input {

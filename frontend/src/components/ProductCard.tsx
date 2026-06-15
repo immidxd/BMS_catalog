@@ -1,5 +1,5 @@
 // Картка товару в сітці каталогу
-import { CatalogItem, formatPrice } from '../api';
+import { CatalogItem, formatPrice, formatSeason } from '../api';
 
 type Props = { item: CatalogItem; onOpen: (id: number) => void };
 
@@ -23,7 +23,7 @@ export const ProductCard = ({ item, onOpen }: Props) => {
       <div className="card-body">
         <div className="card-brand">{item.brand ?? item.type ?? ' '}</div>
         <div className="card-title">{item.model ?? item.type ?? 'Без назви'}</div>
-        <div className="card-meta">{[size, item.season].filter(Boolean).join(' · ') || ' '}</div>
+        <div className="card-meta">{[size, formatSeason(item.season)].filter(Boolean).join(' · ') || ' '}</div>
         <div>
           <span className="price">{formatPrice(item.price)}</span>
           {item.oldprice && item.oldprice > item.price && (

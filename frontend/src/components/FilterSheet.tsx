@@ -181,6 +181,12 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
   };
   const gendersToShow = withSelected(facets?.genders, options.genders, draft.genderids);
   const colorsToShow = withSelected<ColorGroupOption>(facets?.color_groups, options.color_groups, draft.color_group_ids);
+  // Буквені розміри — динамічні: лише наявні в поточному наборі (+ вже вибрані).
+  // Якщо порожньо — секція «Розмірна сітка» взагалі не показується.
+  const lettersToShow = useMemo(() => {
+    const base = facets?.size_letters ?? options.size_letters;
+    return base.concat((draft.size_letters ?? []).filter((l) => !base.includes(l)));
+  }, [facets, options.size_letters, draft.size_letters]);
 
   // Блокуємо прокрутку каталогу під листом
   useEffect(() => {
@@ -283,10 +289,10 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
             ) : (
               <div className="show-more-hint">Немає доступних розмірів</div>
             )}
-            {options.size_letters.length > 0 && (
+            {lettersToShow.length > 0 && (
               <>
                 <div className="filter-label">Розмірна сітка</div>
-                <div className="filter-options">{strChips('size_letters', options.size_letters)}</div>
+                <div className="filter-options">{strChips('size_letters', lettersToShow)}</div>
               </>
             )}
           </Accordion>
@@ -320,15 +326,21 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
             <Accordion title="Колір" badge={draft.color_group_ids?.length ?? 0}
               summary={summarize(namesByIds(options.color_groups, draft.color_group_ids))}
               open={openSections.has('color')} onToggle={() => toggleSection('color')}>
-              <div className="filter-options">
-                {colorsToShow.map((group) => (
-                  <button type="button" key={group.id}
-                    className={`chip${draft.color_group_ids?.includes(group.id) ? ' active' : ''}`}
-                    onClick={() => toggleId('color_group_ids', group.id)}>
-                    {group.hex_code && <span className="color-dot" style={{ background: group.hex_code }} />}
-                    {group.name}<span className="option-count">{group.count}</span>
-                  </button>
-                ))}
+              <div className="color-swatch-grid">
+                {colorsToShow.map((group) => {
+                  const active = draft.color_group_ids?.includes(group.id);
+                  const isWhite = group.hex_code?.toLowerCase() === '#ffffff';
+                  return (
+                    <div key={group.id} className="color-swatch-cell">
+                      <button type="button" title={`${group.name} (${group.count})`} aria-label={group.name}
+                        aria-pressed={active}
+                        className={`color-swatch${active ? ' active' : ''}${isWhite ? ' white' : ''}`}
+                        style={{ background: group.hex_code || '#ccc' }}
+                        onClick={() => toggleId('color_group_ids', group.id)} />
+                      <span className={`color-count${active ? ' active' : ''}`}>{group.count}×</span>
+                    </div>
+                  );
+                })}
               </div>
             </Accordion>
           )}

@@ -128,6 +128,7 @@ export const fetchFilters = (): Promise<FilterOptions> => fetchJson('/api/catalo
 // наборі. Кожен фасет виключає свій фільтр — опції адаптуються під інші фільтри.
 export type Facets = {
   eu: number[];
+  size_letters: string[];
   genders: FilterOption[];
   color_groups: ColorGroupOption[];
 };
@@ -142,3 +143,12 @@ export const fetchConfig = (): Promise<{ seller_username: string; shop_name: str
 
 export const formatPrice = (price: number): string =>
   `${new Intl.NumberFormat('uk-UA').format(price)} грн`;
+
+// Сезон для показу: якщо їх кілька і є «Всесезон» — «Всесезон» ховаємо
+// (показуємо лише решту); розділювач — слеш. Один «Всесезон» лишаємо як є.
+export const formatSeason = (season: string | null): string | null => {
+  if (!season) return null;
+  let parts = season.split(',').map((s) => s.trim()).filter(Boolean);
+  if (parts.length > 1) parts = parts.filter((p) => p.toLowerCase() !== 'всесезон');
+  return parts.join(' / ') || season;
+};

@@ -1,6 +1,6 @@
 // Повна сторінка товару: галерея (свайп), характеристики, зв'язок з продавцем
 import React, { useEffect, useRef, useState } from 'react';
-import { ProductDetail, fetchProduct, formatPrice } from '../api';
+import { ProductDetail, fetchProduct, formatPrice, formatSeason } from '../api';
 import { contactSeller, haptic, isInTelegram, showBackButton } from '../telegram';
 
 type Props = { productId: number; sellerUsername: string; onBack: () => void };
@@ -128,7 +128,7 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
     ['Стиль', product.stylename],
     ['Колір', product.colorname],
     ['Стан', product.conditionname],
-    ['Сезон', product.season],
+    ['Сезон', formatSeason(product.season)],
     ['Довжина', rangeCm(product.measurements_length_min, product.measurements_length_max)],
     ['Висота', rangeCm(product.measurements_height_min, product.measurements_height_max)],
     ['Каблук', rangeCm(product.measurements_heel_min, product.measurements_heel_max)],
