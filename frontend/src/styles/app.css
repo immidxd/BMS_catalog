@@ -472,6 +472,30 @@ button {
 }
 .size-chip.active { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 
+/* ── Чіпи статі — іконки з кольоровим відтінком при активації (як у BMS) ──── */
+.gender-chips { display: flex; gap: var(--space-2); }
+.gender-chip {
+  flex: 1;
+  min-width: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg-subtle);
+  transition: all var(--dur-fast) var(--ease);
+}
+.gender-chip:active { transform: scale(0.96); }
+.gender-chip:hover { color: var(--fg); border-color: var(--fg-faint); }
+/* Рожевий (жін), синій (чол), нейтральний (унісекс) */
+.gender-chip.female.active { background: #fdf2f8; color: #db2777; border-color: #f9a8d4; }
+.gender-chip.male.active   { background: #eff6ff; color: #2563eb; border-color: #93c5fd; }
+.gender-chip.unisex.active { background: var(--hover); color: var(--fg); border-color: var(--fg-subtle); }
+[data-theme='dark'] .gender-chip.female.active { background: rgba(190, 24, 93, 0.22); color: #f9a8d4; border-color: #be185d; }
+[data-theme='dark'] .gender-chip.male.active   { background: rgba(30, 58, 138, 0.32); color: #93c5fd; border-color: #1e40af; }
+
 /* ── Пошук у секції (Тип/Бренд) ─────────────────────────────────────────── */
 .chip-search {
   width: 100%;

@@ -124,6 +124,17 @@ export const fetchCatalog = (query: CatalogQuery, page: number, perPage = 20): P
 
 export const fetchFilters = (): Promise<FilterOptions> => fetchJson('/api/catalog/filters');
 
+// Динамічні фасети: EU-розміри, стать, кольорові групи — наявні в поточному
+// наборі. Кожен фасет виключає свій фільтр — опції адаптуються під інші фільтри.
+export type Facets = {
+  eu: number[];
+  genders: FilterOption[];
+  color_groups: ColorGroupOption[];
+};
+
+export const fetchFacets = (query: CatalogQuery): Promise<Facets> =>
+  fetchJson<Facets>(`/api/catalog/facets?${buildParams(query, 1, 1)}`);
+
 export const fetchProduct = (id: number): Promise<ProductDetail> => fetchJson(`/api/catalog/${id}`);
 
 export const fetchConfig = (): Promise<{ seller_username: string; shop_name: string; admin_tg_ids: number[] }> =>

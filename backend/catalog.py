@@ -6,6 +6,8 @@
   - не «загублений» (is_lost), валідний productnumber, ціна > 0
 """
 
+import math
+import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -32,6 +34,23 @@ _SOLD_JOIN = """
           AND o.order_status_id IN (1, 7, 9)
         GROUP BY oi.product_id
     ) sold ON sold.product_id = p.id
+"""
+
+# Повний набір JOIN-ів для запитів каталогу (список товарів + фасет розмірів):
+# покриває всі поля, на які можуть посилатися фільтри (пошук по бренду/типу/
+# підвиду/стилю/кольору/статі/стану). Тримаємо в одному місці — щоб список і
+# фасет завжди мали однакову основу.
+_FULL_JOINS = f"""
+        FROM products p
+        LEFT JOIN brands b ON p.brandid = b.id
+        LEFT JOIN types t ON p.typeid = t.id
+        LEFT JOIN subtypes st ON p.subtypeid = st.id
+        LEFT JOIN styles sty ON p.styleid = sty.id
+        LEFT JOIN colors c ON p.colorid = c.id
+        LEFT JOIN genders g ON p.genderid = g.id
+        LEFT JOIN conditions cond ON cond.id = COALESCE(p.current_conditionid, p.conditionid)
+        LEFT JOIN statuses s ON p.statusid = s.id
+        {_SOLD_JOIN}
 """
 
 _AVAILABLE_WHERE = """
@@ -201,19 +220,7 @@ async def get_catalog(
         min_price, max_price, min_cm, max_cm, has_photo,
     )
 
-    base_sql = f"""
-        FROM products p
-        LEFT JOIN brands b ON p.brandid = b.id
-        LEFT JOIN types t ON p.typeid = t.id
-        LEFT JOIN subtypes st ON p.subtypeid = st.id
-        LEFT JOIN styles sty ON p.styleid = sty.id
-        LEFT JOIN colors c ON p.colorid = c.id
-        LEFT JOIN genders g ON p.genderid = g.id
-        LEFT JOIN conditions cond ON cond.id = COALESCE(p.current_conditionid, p.conditionid)
-        LEFT JOIN statuses s ON p.statusid = s.id
-        {_SOLD_JOIN}
-        WHERE {_AVAILABLE_WHERE} {where_sql}
-    """
+    base_sql = f"{_FULL_JOINS} WHERE {_AVAILABLE_WHERE} {where_sql}"
 
     total = db.execute(
         text(f"SELECT COUNT(DISTINCT p.productnumber) {base_sql}"), params
@@ -360,6 +367,97 @@ async def get_catalog_filters(db: Session = Depends(get_db)):
         "size_letters": size_letters,
         "seasons": seasons,
         "price_range": dict(price_range) if price_range else {"min": 0, "max": 0},
+    }
+
+
+def _sizeeu_to_wholes(value: str) -> List[int]:
+    """Цілі EU-розміри, які «накриває» значення sizeeu — узгоджено з матчингом
+    чіпа у _build_filters (floor по [lo, hi]): "39"/"39.5"/"39.3"→[39];
+    "39-40"→[39,40]; "36-38.5"→[36,37,38]. Нечислові/порожні → []."""
+    cleaned = value.replace(",", ".").replace(" ", "")
+    parts = cleaned.split("-")
+
+    def _num(token: str) -> Optional[float]:
+        return float(token) if re.fullmatch(r"[0-9]+(\.[0-9]+)?", token) else None
+
+    lo = _num(parts[0]) if parts and parts[0] else None
+    if lo is None:
+        return []
+    hi = _num(parts[1]) if len(parts) > 1 else None
+    if hi is None:
+        hi = lo
+    return list(range(math.floor(lo), math.floor(hi) + 1))
+
+
+@router.get("/api/catalog/facets")
+async def get_facets(
+    search: Optional[str] = Query(None),
+    typeids: Optional[List[int]] = Query(None),
+    subtypeids: Optional[List[int]] = Query(None),
+    brandids: Optional[List[int]] = Query(None),
+    genderids: Optional[List[int]] = Query(None),
+    color_group_ids: Optional[List[int]] = Query(None),
+    conditionids: Optional[List[int]] = Query(None),
+    seasons: Optional[List[str]] = Query(None),
+    eu_sizes: Optional[List[int]] = Query(None),
+    size_letters: Optional[List[str]] = Query(None),
+    min_price: Optional[float] = Query(None, ge=0),
+    max_price: Optional[float] = Query(None, ge=0),
+    min_cm: Optional[float] = Query(None),
+    max_cm: Optional[float] = Query(None),
+    has_photo: bool = Query(True),
+    db: Session = Depends(get_db),
+):
+    """Динамічні фасети: EU-розміри, стать, кольорові групи — наявні в поточному
+    відфільтрованому наборі. Кожен фасет ВИКЛЮЧАЄ свій власний фільтр (faceted
+    search) — щоб опції адаптувались під інші активні фільтри, але лишались
+    вибірними (вибране можна зняти, навіть якщо фасет його вже не містить)."""
+
+    def _where(skip: str) -> tuple[str, Dict[str, Any]]:
+        return _build_filters(
+            search, typeids, subtypeids, brandids,
+            None if skip == "gender" else genderids,
+            None if skip == "color" else color_group_ids,
+            conditionids, seasons,
+            None if skip == "size" else eu_sizes,
+            size_letters, min_price, max_price, min_cm, max_cm, has_photo,
+        )
+
+    # — EU-розміри (виключаємо власний розмірний фільтр) —
+    sw, sp = _where("size")
+    size_rows = db.execute(text(f"""
+        SELECT DISTINCT p.sizeeu {_FULL_JOINS}
+        WHERE {_AVAILABLE_WHERE} {sw} AND p.sizeeu IS NOT NULL AND p.sizeeu <> ''
+    """), sp).scalars().all()
+    wholes: set[int] = set()
+    for value in size_rows:
+        wholes.update(_sizeeu_to_wholes(value))
+    eu = sorted(w for w in wholes if w >= 14)
+
+    # — Стать (виключаємо власний фільтр статі) —
+    gw, gp = _where("gender")
+    gender_rows = db.execute(text(f"""
+        SELECT g.id AS id, g.gendername AS name, COUNT(DISTINCT p.id) AS count {_FULL_JOINS}
+        WHERE {_AVAILABLE_WHERE} {gw}
+          AND p.genderid IS NOT NULL AND g.gendername NOT IN ('', 'Невідомо', 'Невизначено')
+        GROUP BY g.id, g.gendername ORDER BY count DESC
+    """), gp).mappings().all()
+
+    # — Кольорові групи (виключаємо власний фільтр кольору) —
+    cw, cp = _where("color")
+    color_rows = db.execute(text(f"""
+        SELECT cg.id AS id, cg.name AS name, cg.hex_code AS hex_code, COUNT(DISTINCT p.id) AS count
+        {_FULL_JOINS}
+        JOIN color_group_members cgm ON cgm.color_id = p.colorid
+        JOIN color_groups cg ON cg.id = cgm.group_id
+        WHERE {_AVAILABLE_WHERE} {cw}
+        GROUP BY cg.id, cg.name, cg.hex_code, cg.display_order ORDER BY cg.display_order
+    """), cp).mappings().all()
+
+    return {
+        "eu": eu,
+        "genders": [dict(r) for r in gender_rows],
+        "color_groups": [dict(r) for r in color_rows],
     }
 
 

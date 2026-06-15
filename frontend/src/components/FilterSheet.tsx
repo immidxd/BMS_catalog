@@ -1,9 +1,32 @@
 // Нижній лист гнучких фільтрів каталогу — компактний акордеон зі згорнутими
 // секціями: користувач бачить охайний перелік, розгортає лише потрібне.
-import { ReactNode, useEffect, useState } from 'react';
-import { CatalogQuery, FilterOption, FilterOptions, fetchCatalog, formatPrice } from '../api';
+import { ReactNode, useEffect, useMemo, useState } from 'react';
+import { CatalogQuery, ColorGroupOption, Facets, FilterOption, FilterOptions, fetchCatalog, fetchFacets, formatPrice } from '../api';
 import { useDebounced } from '../hooks/useCatalog';
 import { haptic, hapticSelect } from '../telegram';
+
+// ── Стать: вид (за назвою) + іконка-гліф (як у BMS) ─────────────────────────
+type GenderKind = 'female' | 'male' | 'unisex';
+const genderKind = (name: string): GenderKind => {
+  const n = (name || '').toLowerCase();
+  if (n.startsWith('жін')) return 'female';
+  if (n.startsWith('чол')) return 'male';
+  return 'unisex';
+};
+
+const GenderGlyph = ({ kind }: { kind: GenderKind }) => {
+  const c = { viewBox: '0 0 24 24', width: 20, height: 20, fill: 'none', stroke: 'currentColor',
+    strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true };
+  if (kind === 'female') return (
+    <svg {...c}><circle cx="12" cy="8" r="5" /><line x1="12" y1="13" x2="12" y2="21" /><line x1="9" y1="18" x2="15" y2="18" /></svg>
+  );
+  if (kind === 'male') return (
+    <svg {...c}><circle cx="10" cy="14" r="5" /><line x1="13.8" y1="10.2" x2="19" y2="5" /><polyline points="14.5 5 19 5 19 9.5" /></svg>
+  );
+  return (
+    <svg {...c}><circle cx="11" cy="13" r="4" /><line x1="11" y1="17" x2="11" y2="21.5" /><line x1="8.5" y1="19.2" x2="13.5" y2="19.2" /><line x1="13.9" y1="10.1" x2="18" y2="6" /><polyline points="14.7 6 18 6 18 9.3" /></svg>
+  );
+};
 
 type Props = {
   options: FilterOptions;
@@ -21,9 +44,11 @@ type StrKey = 'seasons' | 'size_letters';
 // продажами), щоб не перенавантажувати; решту користувач знаходить пошуком.
 const CHIP_DEFAULT = 6;
 const CHIP_LIMIT = 40;   // максимум під час активного пошуку в секції
-// Базові цілі EU-розміри 14..53. Чіп цілого ловить і дроби (39.5→39), і
-// діапазони (39-40 → 39 і 40) — «розумне» зіставлення на боці backend.
-const EU_SIZES = Array.from({ length: 53 - 14 + 1 }, (_, i) => 14 + i);
+// Запасна повна сітка цілих EU 14..53 — показуємо до першої відповіді фасета.
+// Далі сітка ДИНАМІЧНА: лише розміри, реально наявні в поточному наборі
+// (fetchAvailableSizes). Чіп цілого ловить і дроби (39.5→39), і діапазони
+// (39-40 → 39 і 40) — зіставлення на боці backend.
+const EU_SIZES_FALLBACK = Array.from({ length: 53 - 14 + 1 }, (_, i) => 14 + i);
 
 // Перемикання значення у multi-select масиві (undefined коли порожньо)
 const toggleValue = <T,>(list: T[] | undefined, value: T): T[] | undefined => {
@@ -112,9 +137,12 @@ const SearchableChips = ({ options, selectedIds, query, onQueryChange, onToggle,
 export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }: Props) => {
   const [draft, setDraft] = useState<CatalogQuery>(query);
   const [draftTotal, setDraftTotal] = useState(total);
-  const [openId, setOpenId] = useState<string | null>(null);   // одна розгорнута секція
+  // Розмір/Колір/Стать — розгорнуті за замовчуванням; решта — за кліком
+  const [openSections, setOpenSections] = useState<Set<string>>(() => new Set(['size', 'color', 'gender']));
   const [typeQuery, setTypeQuery] = useState('');
   const [brandQuery, setBrandQuery] = useState('');
+  // Динамічні фасети: null = ще не завантажено (показуємо запасні дані).
+  const [facets, setFacets] = useState<Facets | null>(null);
   const debouncedDraft = useDebounced(draft);
 
   // Живий підрахунок: скільки товарів покаже чернетка фільтрів
@@ -126,13 +154,48 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
     return () => { cancelled = true; };
   }, [debouncedDraft]);
 
+  // Динамічні фасети: розміри/стать/колір під поточні (інші) фільтри
+  useEffect(() => {
+    let cancelled = false;
+    fetchFacets(debouncedDraft)
+      .then((f) => { if (!cancelled) setFacets(f); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [debouncedDraft]);
+
+  // Сітка EU: наявні розміри (або повна, поки не завантажено) + завжди вже
+  // вибрані (щоб їх можна було зняти, навіть якщо фасет їх більше не містить).
+  const sizesToShow = useMemo(() => {
+    const base = facets?.eu ?? EU_SIZES_FALLBACK;
+    const set = new Set<number>([...base, ...(draft.eu_sizes ?? [])]);
+    return Array.from(set).sort((a, b) => a - b);
+  }, [facets, draft.eu_sizes]);
+
+  // Стать/Колір: динамічні опції з фасета (поки нема — статичні з options),
+  // плюс завжди вже вибрані (щоб можна було зняти).
+  const withSelected = <T extends { id: number }>(dynamic: T[] | undefined, fallback: T[], selected?: number[]): T[] => {
+    const list = dynamic ?? fallback;
+    const present = new Set(list.map((o) => o.id));
+    const extra = fallback.filter((o) => selected?.includes(o.id) && !present.has(o.id));
+    return [...list, ...extra];
+  };
+  const gendersToShow = withSelected(facets?.genders, options.genders, draft.genderids);
+  const colorsToShow = withSelected<ColorGroupOption>(facets?.color_groups, options.color_groups, draft.color_group_ids);
+
   // Блокуємо прокрутку каталогу під листом
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = ''; };
   }, []);
 
-  const toggleSection = (id: string) => { haptic('light'); setOpenId((cur) => (cur === id ? null : id)); };
+  const toggleSection = (id: string) => {
+    haptic('light');
+    setOpenSections((cur) => {
+      const next = new Set(cur);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
   const toggleId = (key: IdKey, id: number) => { hapticSelect(); setDraft((d) => ({ ...d, [key]: toggleValue(d[key], id) })); };
   const toggleStr = (key: StrKey, value: string) => { hapticSelect(); setDraft((d) => ({ ...d, [key]: toggleValue(d[key], value) })); };
   const toggleEuSize = (n: number) => { hapticSelect(); setDraft((d) => ({ ...d, eu_sizes: toggleValue(d.eu_sizes, n) })); };
@@ -197,7 +260,7 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
           {options.types.length > 0 && (
             <Accordion title="Тип" badge={draft.typeids?.length ?? 0}
               summary={summarize(namesByIds(options.types, draft.typeids))}
-              open={openId === 'type'} onToggle={() => toggleSection('type')}>
+              open={openSections.has('type')} onToggle={() => toggleSection('type')}>
               <SearchableChips options={options.types} selectedIds={draft.typeids} query={typeQuery}
                 onQueryChange={setTypeQuery} onToggle={(id) => toggleId('typeids', id)}
                 placeholder="Пошук типу…" />
@@ -205,17 +268,21 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
           )}
 
           <Accordion title="Розмір" badge={sizeBadge} summary={sizeSummary}
-            open={openId === 'size'} onToggle={() => toggleSection('size')}>
+            open={openSections.has('size')} onToggle={() => toggleSection('size')}>
             <div className="filter-label">EU</div>
-            <div className="size-grid">
-              {EU_SIZES.map((n) => (
-                <button type="button" key={n}
-                  className={`size-chip${draft.eu_sizes?.includes(n) ? ' active' : ''}`}
-                  onClick={() => toggleEuSize(n)}>
-                  {n}
-                </button>
-              ))}
-            </div>
+            {sizesToShow.length > 0 ? (
+              <div className="size-grid">
+                {sizesToShow.map((n) => (
+                  <button type="button" key={n}
+                    className={`size-chip${draft.eu_sizes?.includes(n) ? ' active' : ''}`}
+                    onClick={() => toggleEuSize(n)}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="show-more-hint">Немає доступних розмірів</div>
+            )}
             {options.size_letters.length > 0 && (
               <>
                 <div className="filter-label">Розмірна сітка</div>
@@ -227,7 +294,7 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
           {options.brands.length > 0 && (
             <Accordion title="Бренд" badge={draft.brandids?.length ?? 0}
               summary={summarize(namesByIds(options.brands, draft.brandids))}
-              open={openId === 'brand'} onToggle={() => toggleSection('brand')}>
+              open={openSections.has('brand')} onToggle={() => toggleSection('brand')}>
               <SearchableChips options={options.brands} selectedIds={draft.brandids} query={brandQuery}
                 onQueryChange={setBrandQuery} onToggle={(id) => toggleId('brandids', id)}
                 placeholder="Пошук бренду…" />
@@ -235,7 +302,7 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
           )}
 
           <Accordion title="Ціна" badge={priceSummary ? 1 : 0} summary={priceSummary}
-            open={openId === 'price'} onToggle={() => toggleSection('price')}>
+            open={openSections.has('price')} onToggle={() => toggleSection('price')}>
             <div className="price-inputs">
               <input type="number" inputMode="numeric"
                 placeholder={`від ${Math.floor(options.price_range.min)}`}
@@ -249,12 +316,12 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
             </div>
           </Accordion>
 
-          {options.color_groups.length > 0 && (
+          {colorsToShow.length > 0 && (
             <Accordion title="Колір" badge={draft.color_group_ids?.length ?? 0}
               summary={summarize(namesByIds(options.color_groups, draft.color_group_ids))}
-              open={openId === 'color'} onToggle={() => toggleSection('color')}>
+              open={openSections.has('color')} onToggle={() => toggleSection('color')}>
               <div className="filter-options">
-                {options.color_groups.map((group) => (
+                {colorsToShow.map((group) => (
                   <button type="button" key={group.id}
                     className={`chip${draft.color_group_ids?.includes(group.id) ? ' active' : ''}`}
                     onClick={() => toggleId('color_group_ids', group.id)}>
@@ -269,23 +336,36 @@ export const FilterSheet = ({ options, query, total, isAdmin, onApply, onClose }
           {options.seasons.length > 0 && (
             <Accordion title="Сезон" badge={draft.seasons?.length ?? 0}
               summary={summarize(draft.seasons ?? [])}
-              open={openId === 'season'} onToggle={() => toggleSection('season')}>
+              open={openSections.has('season')} onToggle={() => toggleSection('season')}>
               <div className="filter-options">{strChips('seasons', options.seasons)}</div>
             </Accordion>
           )}
 
-          {options.genders.length > 0 && (
+          {gendersToShow.length > 0 && (
             <Accordion title="Стать" badge={draft.genderids?.length ?? 0}
               summary={summarize(namesByIds(options.genders, draft.genderids))}
-              open={openId === 'gender'} onToggle={() => toggleSection('gender')}>
-              <div className="filter-options">{idChips('genderids', options.genders)}</div>
+              open={openSections.has('gender')} onToggle={() => toggleSection('gender')}>
+              <div className="gender-chips">
+                {gendersToShow.map((gender) => {
+                  const kind = genderKind(gender.name);
+                  const active = draft.genderids?.includes(gender.id);
+                  return (
+                    <button type="button" key={gender.id} title={gender.name} aria-label={gender.name}
+                      aria-pressed={active}
+                      className={`gender-chip ${kind}${active ? ' active' : ''}`}
+                      onClick={() => toggleId('genderids', gender.id)}>
+                      <GenderGlyph kind={kind} />
+                    </button>
+                  );
+                })}
+              </div>
             </Accordion>
           )}
 
           {options.conditions.length > 0 && (
             <Accordion title="Стан" badge={draft.conditionids?.length ?? 0}
               summary={summarize(namesByIds(options.conditions, draft.conditionids))}
-              open={openId === 'condition'} onToggle={() => toggleSection('condition')}>
+              open={openSections.has('condition')} onToggle={() => toggleSection('condition')}>
               <div className="filter-options">{idChips('conditionids', options.conditions)}</div>
             </Accordion>
           )}
