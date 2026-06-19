@@ -27,9 +27,27 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 URL_PREFIX = "/product-images"
 INDEX_TTL = 300  # сек; перескан папки не частіше, ніж раз на 5 хв
 
+# Cloudflare R2 (публічний CDN). Якщо задано — URL фото вказують прямо на R2,
+# а не на локальний статик-маунт цього бекенда. Це і є «миттєва» роздача для
+# публічного каталогу: фото з краю мережі Cloudflare, без навантаження на нас,
+# без залежності від того, чи запущений локальний бекенд. Ключі в R2 = той самий
+# відносний шлях, що й локально (`Взуття/Ф1184_01.webp`), бо ingest/міграція в
+# BMS заливали саме так. Порожній → локальний фолбек (dev).
+R2_PUBLIC_BASE_URL = os.environ.get("R2_PUBLIC_BASE_URL", "").strip().rstrip("/")
+# Параметр трансформації ширини (Cloudflare Images/Worker на власному домені).
+# r2.dev його не підтримує → лишити порожнім; на власному домені напр. "width".
+R2_RESIZE_PARAM = os.environ.get("R2_RESIZE_PARAM", "").strip()
+
 
 def get_images_dir() -> str:
     return os.environ.get("PRODUCT_IMAGES_DIR", DEFAULT_IMAGES_DIR)
+
+
+def _photo_url(relpath: str) -> str:
+    """URL фото: R2 CDN якщо налаштовано, інакше локальний статик-маунт."""
+    if R2_PUBLIC_BASE_URL:
+        return f"{R2_PUBLIC_BASE_URL}/{quote(relpath)}"
+    return f"{URL_PREFIX}/{quote(relpath)}"
 
 
 @dataclass
@@ -96,7 +114,7 @@ def _build_index() -> Dict[str, List[Tuple[Tuple[int, int, str], ImageEntry]]]:
             pnum, kind = _normalize(raw_pnum), _classify(suffix)
             # URL включає шлях відносно кореня (з підпапкою), '/' не кодуємо
             relpath = os.path.relpath(os.path.join(dirpath, fname), root)
-            entry = ImageEntry(filename=fname, url=f"{URL_PREFIX}/{quote(relpath)}", kind=kind)
+            entry = ImageEntry(filename=fname, url=_photo_url(relpath), kind=kind)
             index.setdefault(pnum, []).append((_sort_key(suffix, kind, base), entry))
             photo_keys.add(raw_pnum)
             photo_keys.add(raw_pnum.lower())
