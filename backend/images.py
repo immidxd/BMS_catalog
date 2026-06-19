@@ -43,11 +43,21 @@ def get_images_dir() -> str:
     return os.environ.get("PRODUCT_IMAGES_DIR", DEFAULT_IMAGES_DIR)
 
 
-def _photo_url(relpath: str) -> str:
-    """URL фото: R2 CDN якщо налаштовано, інакше локальний статик-маунт."""
-    if R2_PUBLIC_BASE_URL:
-        return f"{R2_PUBLIC_BASE_URL}/{quote(relpath)}"
-    return f"{URL_PREFIX}/{quote(relpath)}"
+def _file_version(abs_path: str) -> str:
+    """`?v=<hash>` із mtime+size — cache-busting при заміні фото під тією ж назвою
+    (інакше immutable-кеш браузера/CDN віддавав би старе). '' якщо файлу нема."""
+    try:
+        st = os.stat(abs_path)
+        return f"?v={int(st.st_mtime):x}{st.st_size:x}"
+    except OSError:
+        return ""
+
+
+def _photo_url(relpath: str, abs_path: str = "") -> str:
+    """URL фото: R2 CDN якщо налаштовано, інакше локальний статик-маунт. + ?v=."""
+    ver = _file_version(abs_path) if abs_path else ""
+    base = f"{R2_PUBLIC_BASE_URL}/{quote(relpath)}" if R2_PUBLIC_BASE_URL else f"{URL_PREFIX}/{quote(relpath)}"
+    return base + ver
 
 
 @dataclass
@@ -113,8 +123,9 @@ def _build_index() -> Dict[str, List[Tuple[Tuple[int, int, str], ImageEntry]]]:
             raw_pnum, suffix = m.group(1).strip(), m.group(2)
             pnum, kind = _normalize(raw_pnum), _classify(suffix)
             # URL включає шлях відносно кореня (з підпапкою), '/' не кодуємо
-            relpath = os.path.relpath(os.path.join(dirpath, fname), root)
-            entry = ImageEntry(filename=fname, url=_photo_url(relpath), kind=kind)
+            abs_path = os.path.join(dirpath, fname)
+            relpath = os.path.relpath(abs_path, root)
+            entry = ImageEntry(filename=fname, url=_photo_url(relpath, abs_path), kind=kind)
             index.setdefault(pnum, []).append((_sort_key(suffix, kind, base), entry))
             photo_keys.add(raw_pnum)
             photo_keys.add(raw_pnum.lower())
