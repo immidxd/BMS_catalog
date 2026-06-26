@@ -128,7 +128,10 @@ const fetchJson = async <T>(url: string): Promise<T> => {
 export const fetchCatalog = (query: CatalogQuery, page: number, perPage = 20): Promise<CatalogResponse> =>
   fetchJson(`/api/catalog?${buildParams(query, page, perPage)}`);
 
-export const fetchFilters = (): Promise<FilterOptions> => fetchJson('/api/catalog/filters');
+// admin=true → опції по всьому наявному пулу (для модерації, коли ще нічого не
+// опубліковано); інакше — лише по опублікованих (публічний вид).
+export const fetchFilters = (admin = false): Promise<FilterOptions> =>
+  fetchJson(`/api/catalog/filters${admin ? '?only_published=false' : ''}`);
 
 // Динамічні фасети: EU-розміри, стать, кольорові групи — наявні в поточному
 // наборі. Кожен фасет виключає свій фільтр — опції адаптуються під інші фільтри.

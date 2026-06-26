@@ -24,7 +24,11 @@ const DEFAULT_QUERY: CatalogQuery = { sort: 'newest', has_photo: true };
 
 export const App = () => {
   const [search, setSearch] = useState('');
-  const [query, setQuery] = useState<CatalogQuery>(DEFAULT_QUERY);
+  // Адмін (?admin=1) одразу бачить ПУЛ кандидатів на публікацію (наявні з фото),
+  // а не порожній публічний каталог — щоб було що вмикати 👁. Публіка — як було.
+  const [query, setQuery] = useState<CatalogQuery>(
+    hasAdminParam ? { ...DEFAULT_QUERY, only_published: false } : DEFAULT_QUERY,
+  );
   const [filterOptions, setFilterOptions] = useState<FilterOptions | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [productId, setProductId] = useState<number | null>(null);
@@ -53,8 +57,13 @@ export const App = () => {
     return () => { cancelled = true; };
   }, [effectiveQuery]);
 
+  // Опції фільтрів: адміну — по ВСЬОМУ пулу (інакше при 0 опублікованих лист
+  // фільтрів порожній: немає типів/брендів/розмірів). Публіці — по опублікованих.
   useEffect(() => {
-    fetchFilters().then(setFilterOptions).catch(() => {});
+    fetchFilters(isAdmin).then(setFilterOptions).catch(() => {});
+  }, [isAdmin]);
+
+  useEffect(() => {
     fetchConfig().then((config) => {
       setSellerUsername(config.seller_username);
       setSellerPhone(config.seller_phone);
