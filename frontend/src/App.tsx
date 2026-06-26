@@ -35,6 +35,7 @@ export const App = () => {
   const [sellerUsername, setSellerUsername] = useState('');
   const [sellerPhone, setSellerPhone] = useState('');
   const [sellerInstagram, setSellerInstagram] = useState('');
+  const [sellerViber, setSellerViber] = useState('');
   const [shopName, setShopName] = useState('Каталог');
   const [isAdmin, setIsAdmin] = useState(hasAdminParam);
   const [adminWrites, setAdminWrites] = useState(false);   // чи бекенд дозволяє адмін-запис
@@ -68,6 +69,7 @@ export const App = () => {
       setSellerUsername(config.seller_username);
       setSellerPhone(config.seller_phone);
       setSellerInstagram(config.seller_instagram);
+      setSellerViber(config.seller_viber);
       if (config.shop_name) {
         setShopName(config.shop_name);
         document.title = config.shop_name;
@@ -239,6 +241,7 @@ export const App = () => {
           sellerUsername={sellerUsername}
           sellerPhone={sellerPhone}
           sellerInstagram={sellerInstagram}
+          sellerViber={sellerViber}
           admin={isAdmin}
           onBack={() => setProductId(null)}
         />

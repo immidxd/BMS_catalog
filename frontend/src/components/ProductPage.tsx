@@ -1,13 +1,14 @@
 // Повна сторінка товару: галерея (свайп), характеристики, зв'язок з продавцем
 import React, { useEffect, useRef, useState } from 'react';
 import { ProductDetail, fetchProduct, formatPrice, formatSeason } from '../api';
-import { contactInstagram, contactPhone, contactSeller, haptic, isInTelegram, showBackButton } from '../telegram';
+import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
 
 type Props = {
   productId: number;
   sellerUsername: string;
   sellerPhone: string;
   sellerInstagram: string;
+  sellerViber: string;
   admin?: boolean;   // адмін може відкрити деталь ще не опублікованого товару
   onBack: () => void;
 };
@@ -25,6 +26,9 @@ const MATERIAL_LABELS: Record<string, string> = {
   sole: 'Підошва',
 };
 
+// Типи-аксесуари, для яких «Сезон» недоречний (на відміну від одягу/взуття)
+const NO_SEASON_TYPES = new Set(['Сумка', 'Валіза', 'Ремінь', 'Окуляри', 'Гаманець', 'Рюкзак']);
+
 // "10–11 см" / "10 см" / null з пари min/max
 const rangeCm = (min: number | null, max: number | null): string | null => {
   if (min == null && max == null) return null;
@@ -36,7 +40,7 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
 const cap = (s: string | null): string | null =>
   s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 
-export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInstagram, admin = false, onBack }: Props) => {
+export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin = false, onBack }: Props) => {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [error, setError] = useState(false);
   const [slide, setSlide] = useState(0);
@@ -130,12 +134,15 @@ export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInst
     ? (GENDER_LABEL[product.gendername] ?? product.gendername) : null;
   const subtitle = [product.typename, genderLabel].filter(Boolean).join(' / ');
 
+  // Сезон ховаємо для аксесуарів (сумки/валізи/ремені/окуляри); Габарити — лише де є
+  const showSeason = !NO_SEASON_TYPES.has(product.typename ?? '');
   const specs: Array<[string, string | null]> = [
     ['Підвид', product.subtypename],
     ['Стиль', product.stylename],
     ['Колір', product.colorname],
     ['Стан', product.conditionname],
-    ['Сезон', formatSeason(product.season)],
+    ['Габарити', product.dimensions],
+    ['Сезон', showSeason ? formatSeason(product.season) : null],
     ['Довжина', rangeCm(product.measurements_length_min, product.measurements_length_max)],
     ['Висота', rangeCm(product.measurements_height_min, product.measurements_height_max)],
     ['Каблук', rangeCm(product.measurements_heel_min, product.measurements_heel_max)],
@@ -219,9 +226,10 @@ export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInst
           </div>
         )}
 
-        {product.description && (
+        {/* Опис — службова інформація: показуємо ЛИШЕ адміну, публіці ніколи */}
+        {admin && product.description && (
           <div className="detail-card">
-            <h3>Опис</h3>
+            <h3>Опис <span className="admin-only-tag">тільки адмін</span></h3>
             <p className="description">{cap(product.description)}</p>
           </div>
         )}
@@ -249,7 +257,7 @@ export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInst
         )}
       </div>
 
-      {(sellerUsername || sellerPhone || sellerInstagram) && (
+      {(sellerUsername || sellerPhone || sellerInstagram || sellerViber) && (
         <div className="contact-bar">
           {sellerUsername && (
             <button type="button" className="btn-primary contact-primary" onClick={handleContact}>
@@ -270,6 +278,13 @@ export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInst
               <InstagramIcon />
             </button>
           )}
+          {sellerViber && (
+            <button type="button" className="contact-ghost"
+              onClick={() => { haptic('light'); contactViber(sellerViber); }}
+              aria-label="Viber" title="Viber">
+              <ViberIcon />
+            </button>
+          )}
         </div>
       )}
       </div>
@@ -287,5 +302,12 @@ const PhoneIcon = () => (
 const InstagramIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <rect x="2" y="2" width="20" height="20" rx="5" /><circle cx="12" cy="12" r="4" /><line x1="17.5" y1="6.5" x2="17.5" y2="6.5" />
+  </svg>
+);
+
+const ViberIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 2.5C6.8 2.5 3.5 5.6 3.5 9.6c0 2 .9 3.8 2.5 5v3.4l3-1.7c1 .2 2 .3 3 .3 5.2 0 8.5-3.1 8.5-7S17.2 2.5 12 2.5z" />
+    <path d="M9.2 8.2c.5 1.9 1.9 3.3 3.8 3.9" />
   </svg>
 );

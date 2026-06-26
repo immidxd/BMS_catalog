@@ -110,3 +110,4 @@ export const openExternal = (url: string): void => {
 };
 export const contactPhone = (phone: string): void => openExternal(`tel:${phone.replace(/\s/g, '')}`);
 export const contactInstagram = (handle: string): void => openExternal(`https://instagram.com/${handle}`);
+export const contactViber = (phone: string): void => openExternal(`viber://chat?number=${encodeURIComponent(phone.replace(/\s/g, ''))}`);

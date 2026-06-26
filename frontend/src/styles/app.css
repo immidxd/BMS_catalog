@@ -804,6 +804,18 @@ button {
   color: var(--fg-muted);
 }
 
+/* Позначка «тільки адмін» біля службових блоків (напр. Опис) */
+.admin-only-tag {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--fg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 .spec-row {
   display: flex;
   justify-content: space-between;

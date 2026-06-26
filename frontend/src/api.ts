@@ -72,6 +72,7 @@ export type ProductDetail = {
   typename: string | null;
   year: number | null;
   width: string | null;
+  dimensions: string | null;   // габарити сумки/валізи, напр. "40x20x5"
   available: number;
   measurements_length_min: number | null;
   measurements_length_max: number | null;
@@ -151,7 +152,7 @@ export const fetchProduct = (id: number, admin = false): Promise<ProductDetail> 
   fetchJson(`/api/catalog/${id}${admin ? '?only_published=false' : ''}`);
 
 export const fetchConfig = (): Promise<{
-  seller_username: string; seller_phone: string; seller_instagram: string;
+  seller_username: string; seller_phone: string; seller_instagram: string; seller_viber: string;
   shop_name: string; admin_tg_ids: number[]; admin_writes: boolean;
 }> => fetchJson('/api/config');
 

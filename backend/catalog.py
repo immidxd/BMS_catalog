@@ -522,7 +522,7 @@ async def get_catalog_product(
                    COALESCE(cl.is_published, FALSE) AS published,
                    COALESCE(cl.is_featured, FALSE) AS featured,
                    p.price, p.oldprice, p.sizeeu, p.sizeua, p.measurementscm,
-                   p.size_letter, p.season, p.year, p.width,
+                   p.size_letter, p.season, p.year, p.width, p.dimensions,
                    p.measurements_length_min, p.measurements_length_max,
                    p.measurements_height_min, p.measurements_height_max,
                    p.measurements_heel_min, p.measurements_heel_max,

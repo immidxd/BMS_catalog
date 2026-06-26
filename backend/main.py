@@ -40,6 +40,7 @@ async def get_config():
         # Мульти-канал замовлення — кнопки показуються лише для заданих каналів
         "seller_phone": os.getenv("SELLER_PHONE", ""),
         "seller_instagram": os.getenv("SELLER_INSTAGRAM", "").lstrip("@"),
+        "seller_viber": os.getenv("SELLER_VIBER", ""),   # номер для Viber-чату
         "shop_name": os.getenv("SHOP_NAME", "Каталог"),
         "admin_tg_ids": admin_ids,
         # Чи доступний адмін-запис публікації (Фаза 2) — щоб фронт знав, чи показувати тумблер
