@@ -119,15 +119,20 @@ _index: Dict[str, List[Tuple[Tuple[int, int, str], ImageEntry]]] = {}
 # Ключі для фільтра «з фото»: номер БЕЗ згортання регістру (Postgres LOWER не
 # фолдить кирилицю) + нижньорегістровий дубль як підстраховка.
 _photo_keys: set[str] = set()
+# Окремо — номери з ОФІЦІЙНИМ (студійним) фото. Публічний каталог пускає ЛИШЕ їх:
+# товари тільки з «реальними»/«дефект» фото в каталог не потрапляють.
+_official_photo_keys: set[str] = set()
 _index_built_at: float = 0.0
 
 
 def _build_index() -> Dict[str, List[Tuple[Tuple[int, int, str], ImageEntry]]]:
     index: Dict[str, List[Tuple[Tuple[int, int, str], ImageEntry]]] = {}
     photo_keys: set[str] = set()
+    official_keys: set[str] = set()
     root = get_images_dir()
     if not os.path.isdir(root):
         _photo_keys.clear()
+        _official_photo_keys.clear()
         return index
     # Рекурсивно: фото розкладені по підпапках-категоріях під коренем «Товар»
     for dirpath, _dirs, files in os.walk(root):
@@ -149,10 +154,15 @@ def _build_index() -> Dict[str, List[Tuple[Tuple[int, int, str], ImageEntry]]]:
             index.setdefault(pnum, []).append((_sort_key(suffix, kind, base), entry))
             photo_keys.add(raw_pnum)
             photo_keys.add(raw_pnum.lower())
+            if kind == "official":
+                official_keys.add(raw_pnum)
+                official_keys.add(raw_pnum.lower())
     for entries in index.values():
         entries.sort(key=lambda pair: pair[0])
     _photo_keys.clear()
     _photo_keys.update(photo_keys)
+    _official_photo_keys.clear()
+    _official_photo_keys.update(official_keys)
     return index
 
 
@@ -194,3 +204,10 @@ def photo_productnumbers() -> frozenset[str]:
     """
     _get_index()  # гарантує побудову/оновлення індексу і _photo_keys
     return frozenset(_photo_keys)
+
+
+def official_photo_productnumbers() -> frozenset[str]:
+    """Номери, що мають хоч одне ОФІЦІЙНЕ (студійне) фото — для гейта публічного
+    каталогу (лише такі товари показуються; «реальні»/«дефект»-only — ні)."""
+    _get_index()  # гарантує побудову/оновлення індексу і _official_photo_keys
+    return frozenset(_official_photo_keys)

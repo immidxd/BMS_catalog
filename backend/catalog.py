@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from database import get_db
-from images import GALLERY_IMAGE_WIDTH, list_images, main_image_url, photo_productnumbers
+from images import GALLERY_IMAGE_WIDTH, list_images, main_image_url, official_photo_productnumbers
 
 router = APIRouter()
 
@@ -184,13 +184,14 @@ def _build_filters(
         conditions.append("COALESCE(p.measurementscm_min, p.measurementscm_max) <= :max_cm")
         params["max_cm"] = max_cm
     if has_photo:
-        # Фото на диску → зіставляємо номер (і донора official) з набором.
+        # Лише ОФІЦІЙНІ (студійні) фото: зіставляємо власний номер АБО донора
+        # official_photos_from з набором номерів, що мають офіційне фото.
         # БЕЗ LOWER: Postgres не фолдить кирилицю; набір містить обидва регістри.
         conditions.append("""(
             BTRIM(LTRIM(p.productnumber, '#')) = ANY(:photo_pns)
             OR BTRIM(COALESCE(p.official_photos_from, '')) = ANY(:photo_pns)
         )""")
-        params["photo_pns"] = list(photo_productnumbers())
+        params["photo_pns"] = list(official_photo_productnumbers())
 
     where_sql = (" AND " + " AND ".join(conditions)) if conditions else ""
     return where_sql, params
