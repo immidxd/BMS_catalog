@@ -182,6 +182,10 @@ export const App = () => {
             </button>
           )}
         </div>
+        {/* Лічильник: видно, що показано ВЕСЬ набір (сортування не обмежує список) */}
+        {!error && total > 0 && (
+          <div className="result-count">{isAdmin ? 'Кандидатів' : 'Товарів'}: {total}</div>
+        )}
       </header>
 
       {error && (
@@ -235,6 +239,7 @@ export const App = () => {
           sellerUsername={sellerUsername}
           sellerPhone={sellerPhone}
           sellerInstagram={sellerInstagram}
+          admin={isAdmin}
           onBack={() => setProductId(null)}
         />
       )}

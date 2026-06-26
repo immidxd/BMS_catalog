@@ -146,6 +146,13 @@ button {
 
 .chip .x { font-size: var(--text-xs); opacity: 0.7; }
 
+/* Лічильник знайдених товарів — щоб було видно, що показано весь набір */
+.result-count {
+  font-size: var(--text-xs);
+  color: var(--fg-subtle);
+  padding: 4px var(--space-1) 0;
+}
+
 /* ── Сітка товарів ──────────────────────────────────────────────────────── */
 .grid {
   display: grid;

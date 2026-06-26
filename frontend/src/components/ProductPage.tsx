@@ -8,6 +8,7 @@ type Props = {
   sellerUsername: string;
   sellerPhone: string;
   sellerInstagram: string;
+  admin?: boolean;   // адмін може відкрити деталь ще не опублікованого товару
   onBack: () => void;
 };
 
@@ -35,7 +36,7 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
 const cap = (s: string | null): string | null =>
   s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 
-export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInstagram, onBack }: Props) => {
+export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInstagram, admin = false, onBack }: Props) => {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [error, setError] = useState(false);
   const [slide, setSlide] = useState(0);
@@ -56,11 +57,11 @@ export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInst
 
   useEffect(() => {
     let cancelled = false;
-    fetchProduct(productId)
+    fetchProduct(productId, admin)
       .then((data) => { if (!cancelled) setProduct(data); })
       .catch(() => { if (!cancelled) setError(true); });
     return () => { cancelled = true; };
-  }, [productId]);
+  }, [productId, admin]);
 
   const handleScroll = () => {
     const track = trackRef.current;

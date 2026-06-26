@@ -145,7 +145,10 @@ export type Facets = {
 export const fetchFacets = (query: CatalogQuery): Promise<Facets> =>
   fetchJson<Facets>(`/api/catalog/facets?${buildParams(query, 1, 1)}`);
 
-export const fetchProduct = (id: number): Promise<ProductDetail> => fetchJson(`/api/catalog/${id}`);
+// admin=true → дозволяє відкрити деталь ЩЕ НЕ опублікованого товару (для модерації);
+// інакше неопублікований → 404 (публіці не доступний).
+export const fetchProduct = (id: number, admin = false): Promise<ProductDetail> =>
+  fetchJson(`/api/catalog/${id}${admin ? '?only_published=false' : ''}`);
 
 export const fetchConfig = (): Promise<{
   seller_username: string; seller_phone: string; seller_instagram: string;
