@@ -13,6 +13,8 @@ export type CatalogItem = {
   measurementscm: string | null;
   season: string | null;
   image: string | null;
+  featured: boolean;
+  published: boolean;   // для адмін-сітки: видно, що ввімкнено в каталог
 };
 
 export type CatalogResponse = {
@@ -32,6 +34,7 @@ export type FilterOptions = {
   genders: FilterOption[];
   conditions: FilterOption[];
   color_groups: ColorGroupOption[];
+  eu: number[];   // стабільний «всесвіт» EU-розмірів (динаміка лише гасить недоступні)
   size_letters: string[];
   seasons: string[];
   price_range: { min: number; max: number };
@@ -81,6 +84,8 @@ export type ProductDetail = {
   materials: Record<string, string[]>;
   images: ProductImage[];
   size_variants: SizeVariant[];
+  published: boolean;
+  featured: boolean;
 };
 
 export type CatalogQuery = {
@@ -98,6 +103,7 @@ export type CatalogQuery = {
   min_price?: number;
   max_price?: number;
   has_photo?: boolean;
+  only_published?: boolean;   // публіка=true; адмін може вимкнути, щоб бачити весь пул
   sort?: 'newest' | 'price_asc' | 'price_desc';
 };
 
@@ -138,8 +144,28 @@ export const fetchFacets = (query: CatalogQuery): Promise<Facets> =>
 
 export const fetchProduct = (id: number): Promise<ProductDetail> => fetchJson(`/api/catalog/${id}`);
 
-export const fetchConfig = (): Promise<{ seller_username: string; shop_name: string; admin_tg_ids: number[] }> =>
-  fetchJson('/api/config');
+export const fetchConfig = (): Promise<{
+  seller_username: string; seller_phone: string; seller_instagram: string;
+  shop_name: string; admin_tg_ids: number[]; admin_writes: boolean;
+}> => fetchJson('/api/config');
+
+// ── Адмін-запис публікації (Фаза 2) — захищений: Telegram initData АБО адмін-токен ──
+export type AdminAuth = { initData?: string; token?: string };
+
+export const setCatalogPublication = async (
+  productnumber: string,
+  payload: { is_published: boolean; is_featured?: boolean },
+  auth: AdminAuth,
+): Promise<{ productnumber: string; is_published: boolean; is_featured: boolean }> => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (auth.initData) headers['X-Telegram-Init-Data'] = auth.initData;
+  else if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+  const res = await fetch('/api/admin/catalog', {
+    method: 'PATCH', headers, body: JSON.stringify({ productnumber, ...payload }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
 
 export const formatPrice = (price: number): string =>
   `${new Intl.NumberFormat('uk-UA').format(price)} грн`;

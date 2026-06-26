@@ -1,7 +1,7 @@
 // Нижній лист гнучких фільтрів каталогу — компактний акордеон зі згорнутими
 // секціями: користувач бачить охайний перелік, розгортає лише потрібне.
 import { ReactNode, useEffect, useMemo, useState } from 'react';
-import { CatalogQuery, ColorGroupOption, Facets, FilterOption, FilterOptions, fetchCatalog, fetchFacets, formatPrice } from '../api';
+import { CatalogQuery, Facets, FilterOption, FilterOptions, fetchCatalog, fetchFacets, formatPrice } from '../api';
 import { useDebounced } from '../hooks/useCatalog';
 import { haptic, hapticSelect } from '../telegram';
 
@@ -159,30 +159,31 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
     return () => { cancelled = true; };
   }, [debouncedDraft]);
 
-  // Сітка EU: лише реально наявні розміри (без повної запасної сітки — щоб не
-  // було стрибка) + завжди вже вибрані. null = фасети ще вантажаться.
-  const sizesToShow = useMemo(() => {
-    if (!facets) return null;
-    const set = new Set<number>([...facets.eu, ...(draft.eu_sizes ?? [])]);
+  // ── Стабільні «всесвіти» опцій (з /filters) + динамічна доступність (з /facets) ──
+  // Сітка опцій рендериться завжди з фіксованого всесвіту; фасет лише ПОЗНАЧАЄ,
+  // що зараз доступне (решта гасне, але не зникає) → жодного «мелькання» розмітки.
+  // avail === null означає «фасети ще вантажаться» → нічого не гасимо (показуємо все).
+  const euUniverse = useMemo(() => {
+    const set = new Set<number>([...(options.eu ?? []), ...(draft.eu_sizes ?? [])]);
     return Array.from(set).sort((a, b) => a - b);
-  }, [facets, draft.eu_sizes]);
+  }, [options.eu, draft.eu_sizes]);
+  const euAvail = useMemo(() => (facets ? new Set(facets.eu) : null), [facets]);
 
-  // Стать/Колір: динамічні опції з фасета (поки нема — статичні з options),
-  // плюс завжди вже вибрані (щоб можна було зняти).
-  const withSelected = <T extends { id: number }>(dynamic: T[] | undefined, fallback: T[], selected?: number[]): T[] => {
-    const list = dynamic ?? fallback;
-    const present = new Set(list.map((o) => o.id));
-    const extra = fallback.filter((o) => selected?.includes(o.id) && !present.has(o.id));
-    return [...list, ...extra];
-  };
-  const gendersToShow = withSelected(facets?.genders, options.genders, draft.genderids);
-  const colorsToShow = withSelected<ColorGroupOption>(facets?.color_groups, options.color_groups, draft.color_group_ids);
-  // Буквені розміри — динамічні: лише наявні в поточному наборі (+ вже вибрані).
-  // Якщо порожньо — секція «Розмірна сітка» взагалі не показується.
-  const lettersToShow = useMemo(() => {
-    const base = facets?.size_letters ?? options.size_letters;
+  const colorAvail = useMemo(
+    () => (facets ? new Map(facets.color_groups.map((c) => [c.id, c.count])) : null),
+    [facets],
+  );
+  const genderAvail = useMemo(
+    () => (facets ? new Map(facets.genders.map((g) => [g.id, g.count])) : null),
+    [facets],
+  );
+  const letterAvail = useMemo(() => (facets ? new Set(facets.size_letters) : null), [facets]);
+
+  // Буквені розміри: фіксований всесвіт (+ вже вибрані, щоб можна було зняти).
+  const lettersUniverse = useMemo(() => {
+    const base = options.size_letters;
     return base.concat((draft.size_letters ?? []).filter((l) => !base.includes(l)));
-  }, [facets, options.size_letters, draft.size_letters]);
+  }, [options.size_letters, draft.size_letters]);
 
   // Блокуємо прокрутку каталогу під листом
   useEffect(() => {
@@ -204,8 +205,8 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
 
   const handleReset = () => {
     haptic('medium');
-    // «Тільки з фото» НЕ скидається — зберігаємо поточний стан тумблера
-    setDraft({ search: draft.search, sort: draft.sort, has_photo: draft.has_photo });
+    // Адмін-тумблери («з фото», «опубліковані») НЕ скидаються — зберігаємо стан
+    setDraft({ search: draft.search, sort: draft.sort, has_photo: draft.has_photo, only_published: draft.only_published });
     setTypeQuery('');
     setBrandQuery('');
   };
@@ -259,6 +260,57 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
             />
           )}
 
+          {isAdmin && (
+            <Toggle
+              label="Тільки опубліковані"
+              checked={draft.only_published !== false}
+              onToggle={() => { hapticSelect(); setDraft((d) => ({ ...d, only_published: d.only_published === false ? undefined : false })); }}
+            />
+          )}
+
+          <Accordion title="Розмір" badge={sizeBadge} summary={sizeSummary}
+            open={openSections.has('size')} onToggle={() => toggleSection('size')}>
+            {euUniverse.length > 0 && (
+              <>
+                <div className="filter-label">EU</div>
+                <div className="size-grid">
+                  {euUniverse.map((n) => {
+                    const selected = draft.eu_sizes?.includes(n);
+                    const unavail = euAvail !== null && !euAvail.has(n) && !selected;
+                    return (
+                      <button type="button" key={n} disabled={unavail}
+                        className={`size-chip${selected ? ' active' : ''}${unavail ? ' unavail' : ''}`}
+                        onClick={() => toggleEuSize(n)}>
+                        {n}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            {lettersUniverse.length > 0 && (
+              <>
+                <div className="filter-label">Розмірна сітка</div>
+                <div className="filter-options">
+                  {lettersUniverse.map((value) => {
+                    const selected = draft.size_letters?.includes(value);
+                    const unavail = letterAvail !== null && !letterAvail.has(value) && !selected;
+                    return (
+                      <button type="button" key={value} disabled={unavail}
+                        className={`chip${selected ? ' active' : ''}${unavail ? ' unavail' : ''}`}
+                        onClick={() => toggleStr('size_letters', value)}>
+                        {value}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            {euUniverse.length === 0 && lettersUniverse.length === 0 && (
+              <div className="show-more-hint">Немає доступних розмірів</div>
+            )}
+          </Accordion>
+
           {options.types.length > 0 && (
             <Accordion title="Тип" badge={draft.typeids?.length ?? 0}
               summary={summarize(namesByIds(options.types, draft.typeids))}
@@ -269,33 +321,27 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
             </Accordion>
           )}
 
-          <Accordion title="Розмір" badge={sizeBadge} summary={sizeSummary}
-            open={openSections.has('size')} onToggle={() => toggleSection('size')}>
-            <div className="filter-label">EU</div>
-            {sizesToShow === null ? (
-              <div className="size-grid">
-                {Array.from({ length: 15 }, (_, i) => <div key={i} className="size-chip skeleton" />)}
+          {options.genders.length > 0 && (
+            <Accordion title="Стать" badge={draft.genderids?.length ?? 0}
+              summary={summarize(namesByIds(options.genders, draft.genderids))}
+              open={openSections.has('gender')} onToggle={() => toggleSection('gender')}>
+              <div className="gender-chips">
+                {options.genders.map((gender) => {
+                  const kind = genderKind(gender.name);
+                  const active = draft.genderids?.includes(gender.id);
+                  const unavail = genderAvail !== null && !genderAvail.has(gender.id) && !active;
+                  return (
+                    <button type="button" key={gender.id} title={gender.name} aria-label={gender.name}
+                      aria-pressed={active} disabled={unavail}
+                      className={`gender-chip ${kind}${active ? ' active' : ''}${unavail ? ' unavail' : ''}`}
+                      onClick={() => toggleId('genderids', gender.id)}>
+                      <GenderGlyph kind={kind} />
+                    </button>
+                  );
+                })}
               </div>
-            ) : sizesToShow.length > 0 ? (
-              <div className="size-grid">
-                {sizesToShow.map((n) => (
-                  <button type="button" key={n}
-                    className={`size-chip${draft.eu_sizes?.includes(n) ? ' active' : ''}`}
-                    onClick={() => toggleEuSize(n)}>
-                    {n}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="show-more-hint">Немає доступних розмірів</div>
-            )}
-            {lettersToShow.length > 0 && (
-              <>
-                <div className="filter-label">Розмірна сітка</div>
-                <div className="filter-options">{strChips('size_letters', lettersToShow)}</div>
-              </>
-            )}
-          </Accordion>
+            </Accordion>
+          )}
 
           {options.brands.length > 0 && (
             <Accordion title="Бренд" badge={draft.brandids?.length ?? 0}
@@ -304,6 +350,31 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
               <SearchableChips options={options.brands} selectedIds={draft.brandids} query={brandQuery}
                 onQueryChange={setBrandQuery} onToggle={(id) => toggleId('brandids', id)}
                 placeholder="Пошук бренду…" />
+            </Accordion>
+          )}
+
+          {options.color_groups.length > 0 && (
+            <Accordion title="Колір" badge={draft.color_group_ids?.length ?? 0}
+              summary={summarize(namesByIds(options.color_groups, draft.color_group_ids))}
+              open={openSections.has('color')} onToggle={() => toggleSection('color')}>
+              <div className="color-swatch-grid">
+                {options.color_groups.map((group) => {
+                  const active = draft.color_group_ids?.includes(group.id);
+                  const isWhite = group.hex_code?.toLowerCase() === '#ffffff';
+                  const count = colorAvail ? (colorAvail.get(group.id) ?? 0) : group.count;
+                  const unavail = colorAvail !== null && !colorAvail.has(group.id) && !active;
+                  return (
+                    <div key={group.id} className="color-swatch-cell">
+                      <button type="button" title={`${group.name} (${count})`} aria-label={group.name}
+                        aria-pressed={active} disabled={unavail}
+                        className={`color-swatch${active ? ' active' : ''}${isWhite ? ' white' : ''}${unavail ? ' unavail' : ''}`}
+                        style={{ background: group.hex_code || '#ccc' }}
+                        onClick={() => toggleId('color_group_ids', group.id)} />
+                      <span className={`color-count${active ? ' active' : ''}`}>{count}×</span>
+                    </div>
+                  );
+                })}
+              </div>
             </Accordion>
           )}
 
@@ -322,55 +393,11 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
             </div>
           </Accordion>
 
-          {colorsToShow.length > 0 && (
-            <Accordion title="Колір" badge={draft.color_group_ids?.length ?? 0}
-              summary={summarize(namesByIds(options.color_groups, draft.color_group_ids))}
-              open={openSections.has('color')} onToggle={() => toggleSection('color')}>
-              <div className="color-swatch-grid">
-                {colorsToShow.map((group) => {
-                  const active = draft.color_group_ids?.includes(group.id);
-                  const isWhite = group.hex_code?.toLowerCase() === '#ffffff';
-                  return (
-                    <div key={group.id} className="color-swatch-cell">
-                      <button type="button" title={`${group.name} (${group.count})`} aria-label={group.name}
-                        aria-pressed={active}
-                        className={`color-swatch${active ? ' active' : ''}${isWhite ? ' white' : ''}`}
-                        style={{ background: group.hex_code || '#ccc' }}
-                        onClick={() => toggleId('color_group_ids', group.id)} />
-                      <span className={`color-count${active ? ' active' : ''}`}>{group.count}×</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </Accordion>
-          )}
-
           {options.seasons.length > 0 && (
             <Accordion title="Сезон" badge={draft.seasons?.length ?? 0}
               summary={summarize(draft.seasons ?? [])}
               open={openSections.has('season')} onToggle={() => toggleSection('season')}>
               <div className="filter-options">{strChips('seasons', options.seasons)}</div>
-            </Accordion>
-          )}
-
-          {gendersToShow.length > 0 && (
-            <Accordion title="Стать" badge={draft.genderids?.length ?? 0}
-              summary={summarize(namesByIds(options.genders, draft.genderids))}
-              open={openSections.has('gender')} onToggle={() => toggleSection('gender')}>
-              <div className="gender-chips">
-                {gendersToShow.map((gender) => {
-                  const kind = genderKind(gender.name);
-                  const active = draft.genderids?.includes(gender.id);
-                  return (
-                    <button type="button" key={gender.id} title={gender.name} aria-label={gender.name}
-                      aria-pressed={active}
-                      className={`gender-chip ${kind}${active ? ' active' : ''}`}
-                      onClick={() => toggleId('genderids', gender.id)}>
-                      <GenderGlyph kind={kind} />
-                    </button>
-                  );
-                })}
-              </div>
             </Accordion>
           )}
 

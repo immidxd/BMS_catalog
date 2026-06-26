@@ -1,9 +1,15 @@
 // Повна сторінка товару: галерея (свайп), характеристики, зв'язок з продавцем
 import React, { useEffect, useRef, useState } from 'react';
 import { ProductDetail, fetchProduct, formatPrice, formatSeason } from '../api';
-import { contactSeller, haptic, isInTelegram, showBackButton } from '../telegram';
+import { contactInstagram, contactPhone, contactSeller, haptic, isInTelegram, showBackButton } from '../telegram';
 
-type Props = { productId: number; sellerUsername: string; onBack: () => void };
+type Props = {
+  productId: number;
+  sellerUsername: string;
+  sellerPhone: string;
+  sellerInstagram: string;
+  onBack: () => void;
+};
 
 const KIND_LABELS: Record<string, string> = { real: 'реальне фото', defect: 'нюанс' };
 // Матеріали показуємо саме в цьому порядку (тільки наявні позиції)
@@ -29,7 +35,7 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
 const cap = (s: string | null): string | null =>
   s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 
-export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
+export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInstagram, onBack }: Props) => {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [error, setError] = useState(false);
   const [slide, setSlide] = useState(0);
@@ -157,9 +163,10 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
           {copied ? 'Скопійовано ✓' : product.productnumber}
         </button>
         <div className="gallery-track" ref={trackRef} onScroll={handleScroll}>
-          {product.images.length > 0 ? product.images.map((img) => (
+          {product.images.length > 0 ? product.images.map((img, i) => (
             <div className="gallery-slide" key={img.url}>
-              <img src={img.url} alt={titleText} loading="lazy" />
+              <img src={img.url} alt={titleText} decoding="async"
+                loading={i === 0 ? 'eager' : 'lazy'} />
               {KIND_LABELS[img.kind] && <span className="kind-tag">{KIND_LABELS[img.kind]}</span>}
             </div>
           )) : <div className="gallery-slide">Без фото</div>}
@@ -241,11 +248,27 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
         )}
       </div>
 
-      {sellerUsername && (
+      {(sellerUsername || sellerPhone || sellerInstagram) && (
         <div className="contact-bar">
-          <button type="button" className="btn-primary" onClick={handleContact}>
-            Замовити
-          </button>
+          {sellerUsername && (
+            <button type="button" className="btn-primary contact-primary" onClick={handleContact}>
+              Замовити
+            </button>
+          )}
+          {sellerPhone && (
+            <button type="button" className="contact-ghost"
+              onClick={() => { haptic('light'); contactPhone(sellerPhone); }}
+              aria-label="Подзвонити" title="Подзвонити">
+              <PhoneIcon />
+            </button>
+          )}
+          {sellerInstagram && (
+            <button type="button" className="contact-ghost"
+              onClick={() => { haptic('light'); contactInstagram(sellerInstagram); }}
+              aria-label="Instagram" title="Instagram">
+              <InstagramIcon />
+            </button>
+          )}
         </div>
       )}
       </div>
@@ -253,3 +276,15 @@ export const ProductPage = ({ productId, sellerUsername, onBack }: Props) => {
     </div>
   );
 };
+
+const PhoneIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z" />
+  </svg>
+);
+
+const InstagramIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="2" y="2" width="20" height="20" rx="5" /><circle cx="12" cy="12" r="4" /><line x1="17.5" y1="6.5" x2="17.5" y2="6.5" />
+  </svg>
+);

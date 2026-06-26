@@ -25,9 +25,13 @@ button {
 /* ── Шапка: пошук + фільтри + сортування ────────────────────────────────── */
 .header {
   position: sticky;
+  /* top:0 з компенсацією зрізу екрана (notch/статус-бар) у Telegram-WebView:
+     при viewport-fit=cover без цього над липкою шапкою на скролі лишався зазор. */
   top: 0;
   z-index: 10;
-  padding: var(--space-3) var(--space-4) var(--space-2);
+  /* Фон шапки тягнемо вгору під safe-area, щоб над пошуком не зʼявлялась смужка */
+  padding: calc(var(--space-3) + env(safe-area-inset-top, 0px)) var(--space-4) var(--space-2);
+  margin-top: calc(-1 * env(safe-area-inset-top, 0px));
   background: var(--bg);
 }
 
@@ -181,7 +185,66 @@ button {
   justify-content: center;
   color: var(--fg-faint);
   overflow: hidden;
+  position: relative;
 }
+
+/* Бейдж «Рекомендований» — делікатний піл у кутку картки */
+.featured-badge {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 2;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+/* Маркер «не в каталозі» — лише в адмін-пулі (публіці неопубліковані не доходять).
+   Зліва: не взаємовиключний з featured (featured лише для опублікованого), а праворуч
+   місце займає адмін-тумблер 👁. */
+.unlisted-badge {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 2;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+}
+.card.unlisted .card-image img { opacity: 0.5; }
+
+/* ── Обгортка картки + адмін-тумблер публікації (Фаза 2) ─────────────────── */
+.card-wrap { position: relative; display: flex; }
+.card-wrap > .card { flex: 1; min-width: 0; }
+
+/* 👁 Швидкий тумблер публікації — кружечок у куті картки (лише адмін) */
+.pub-fab {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 3;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  backdrop-filter: blur(4px);
+  box-shadow: var(--shadow-sm);
+  transition: background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.pub-fab:hover { background: rgba(0, 0, 0, 0.68); }
+.pub-fab:active { transform: scale(0.9); }
+.pub-fab.on { background: var(--success); }   /* опубліковано → зелений */
 
 .card-image img {
   width: 100%;
@@ -480,6 +543,19 @@ button {
 .size-chip.active { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 .size-chip.skeleton { border-color: transparent; background: var(--surface-alt); animation: shimmer 1.4s var(--ease) infinite; pointer-events: none; }
 
+/* Недоступні зараз опції фасета — плавно гаснуть, але НЕ зникають (стабільна
+   розмітка → жодного «мелькання»). Вибране лишається активним, навіть якщо стало
+   недоступним (щоб можна було зняти). */
+.size-chip.unavail,
+.chip.unavail,
+.gender-chip.unavail,
+.color-swatch.unavail {
+  opacity: 0.32;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.color-swatch.unavail:hover { transform: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.10); }
+
 /* ── Чіпи статі — іконки з кольоровим відтінком при активації (як у BMS) ──── */
 .gender-chips { display: flex; gap: var(--space-2); }
 .gender-chip {
@@ -546,7 +622,7 @@ button {
   aspect-ratio: 1;
   border-radius: var(--radius-md);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.10);
-  transition: box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+  transition: box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
 [data-theme='dark'] .color-swatch { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16); }
 .color-swatch.white { box-shadow: 0 0 0 1px var(--border); }
@@ -735,18 +811,39 @@ button {
 
 .description { white-space: pre-wrap; font-size: var(--text-base); color: var(--fg-muted); margin: 0; }
 
-/* Закріплена кнопка зв'язку з продавцем */
+/* Закріплена панель зв'язку з продавцем (мульти-канал: Telegram + телефон + Instagram) */
 .contact-bar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 45;
+  display: flex;
+  gap: var(--space-2);
+  align-items: stretch;
   padding: var(--space-3) var(--space-4);
   padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
   background: var(--surface);
   border-top: 1px solid var(--border);
 }
+
+.contact-primary { flex: 1; }   /* Telegram — головна кнопка на всю ширину */
+
+/* Телефон / Instagram — квадратні ghost-кнопки поряд */
+.contact-ghost {
+  width: 52px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg-muted);
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.contact-ghost:hover { color: var(--fg); border-color: var(--fg-faint); }
+.contact-ghost:active { transform: scale(0.94); }
 
 /* Кнопка «назад» (поза Telegram, де немає BackButton) */
 .back-fab {

@@ -46,7 +46,13 @@ export const useCatalog = (query: CatalogQuery) => {
     load(pageRef.current + 1);
   }, [load]);
 
-  return { items, total, isLoading, error, loadMore, retry: () => load(1) };
+  // Локальне оновлення однієї картки (напр. після адмін-перемикача публікації) —
+  // без перезавантаження сітки й втрати позиції скролу.
+  const patchItem = useCallback((id: number, partial: Partial<CatalogItem>) => {
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...partial } : it)));
+  }, []);
+
+  return { items, total, isLoading, error, loadMore, retry: () => load(1), patchItem };
 };
 
 // Дебаунс значення (для пошуку під час набору)

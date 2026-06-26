@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Каталог</title>
+    <!-- Ранній TLS/DNS-конект до CDN фото (R2) — перше фото вантажиться швидше.
+         Якщо зміниш домен фото (R2_PUBLIC_BASE_URL) — онови й цей host. -->
+    <link rel="preconnect" href="https://pub-2002131bdaa64e7cb898ccac677a16e8.r2.dev" crossorigin />
+    <link rel="dns-prefetch" href="https://pub-2002131bdaa64e7cb898ccac677a16e8.r2.dev" />
     <!-- Офіційний SDK Telegram Mini Apps: тема, кнопки, haptics -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>

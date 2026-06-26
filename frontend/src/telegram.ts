@@ -5,11 +5,13 @@ type TelegramWebApp = {
   ready: () => void;
   expand: () => void;
   platform: string;
+  initData: string;
   colorScheme: 'light' | 'dark';
   themeParams: Record<string, string>;
   BackButton: { show: () => void; hide: () => void; onClick: (cb: () => void) => void; offClick: (cb: () => void) => void };
   HapticFeedback?: { impactOccurred: (style: 'light' | 'medium' | 'soft') => void; selectionChanged: () => void };
   openTelegramLink: (url: string) => void;
+  openLink?: (url: string) => void;
   onEvent: (event: string, cb: () => void) => void;
   initDataUnsafe?: { user?: { id?: number } };
 };
@@ -26,6 +28,10 @@ export const isInTelegram = Boolean(tg && tg.platform !== 'unknown');
 
 // Telegram ID поточного користувача (для визначення адміна). null — поза Telegram.
 export const telegramUserId: number | null = tg?.initDataUnsafe?.user?.id ?? null;
+
+// Сирий ПІДПИСАНИЙ initData — для автентифікації адмін-записів на бекенді (Фаза 2).
+// Поза Telegram порожній → адмін у браузері авторизується через адмін-токен.
+export const initDataRaw = (): string => tg?.initData ?? '';
 
 // ── Тема: за замовчуванням слідує за пристроєм/Telegram; ручний вибір
 // (якщо є) зберігається у localStorage і має пріоритет ───────────────────────
@@ -96,3 +102,11 @@ export const contactSeller = (username: string, productnumber: string): void => 
   if (isInTelegram) tg!.openTelegramLink(url);
   else window.open(url, '_blank');
 };
+
+// Зовнішнє посилання (телефон/Instagram) — у Telegram через openLink, інакше нова вкладка
+export const openExternal = (url: string): void => {
+  if (isInTelegram && tg!.openLink) tg!.openLink(url);
+  else window.open(url, '_blank');
+};
+export const contactPhone = (phone: string): void => openExternal(`tel:${phone.replace(/\s/g, '')}`);
+export const contactInstagram = (handle: string): void => openExternal(`https://instagram.com/${handle}`);

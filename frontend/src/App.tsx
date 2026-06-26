@@ -1,14 +1,16 @@
 // TG Shop — каталог: пошук, фільтри, сітка товарів, сторінка товару
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CatalogQuery, Facets, FilterOptions, fetchConfig, fetchFacets, fetchFilters } from './api';
+import { CatalogItem, CatalogQuery, Facets, FilterOptions, fetchConfig, fetchFacets, fetchFilters, setCatalogPublication } from './api';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
 import { ProductCard, SkeletonCard } from './components/ProductCard';
 import { ProductPage } from './components/ProductPage';
 import { useCatalog, useDebounced } from './hooks/useCatalog';
-import { currentTheme, haptic, hapticSelect, telegramUserId, toggleTheme } from './telegram';
+import { currentTheme, haptic, hapticSelect, initDataRaw, isInTelegram, telegramUserId, toggleTheme } from './telegram';
 
 // Адмін-режим (бачить тумблер «з фото» тощо): Telegram ID у allowlist або ?admin=1
 const hasAdminParam = new URLSearchParams(window.location.search).has('admin');
+// Адмін-токен для запису з браузера (поза Telegram) — зберігається локально
+const ADMIN_TOKEN_KEY = 'tg-shop-admin-token';
 
 const SORTS: Array<{ value: NonNullable<CatalogQuery['sort']>; label: string }> = [
   { value: 'newest', label: 'Новинки' },
@@ -27,8 +29,11 @@ export const App = () => {
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [productId, setProductId] = useState<number | null>(null);
   const [sellerUsername, setSellerUsername] = useState('');
+  const [sellerPhone, setSellerPhone] = useState('');
+  const [sellerInstagram, setSellerInstagram] = useState('');
   const [shopName, setShopName] = useState('Каталог');
   const [isAdmin, setIsAdmin] = useState(hasAdminParam);
+  const [adminWrites, setAdminWrites] = useState(false);   // чи бекенд дозволяє адмін-запис
   // Фасети наперед: щоб лист фільтрів одразу показував коректні (звужені)
   // розміри/стать/колір без стрибка «повна сітка → звужена».
   const [facets, setFacets] = useState<Facets | null>(null);
@@ -39,7 +44,7 @@ export const App = () => {
     () => ({ ...query, search: debouncedSearch || undefined }),
     [query, debouncedSearch],
   );
-  const { items, total, isLoading, error, loadMore, retry } = useCatalog(effectiveQuery);
+  const { items, total, isLoading, error, loadMore, retry, patchItem } = useCatalog(effectiveQuery);
 
   // Тримаємо фасети актуальними для застосованого запиту (для миттєвого листа)
   useEffect(() => {
@@ -52,14 +57,49 @@ export const App = () => {
     fetchFilters().then(setFilterOptions).catch(() => {});
     fetchConfig().then((config) => {
       setSellerUsername(config.seller_username);
+      setSellerPhone(config.seller_phone);
+      setSellerInstagram(config.seller_instagram);
       if (config.shop_name) {
         setShopName(config.shop_name);
         document.title = config.shop_name;
       }
+      setAdminWrites(config.admin_writes);
       // Адмін, якщо Telegram ID у allowlist (або вже за ?admin=1)
       if (telegramUserId && config.admin_tg_ids.includes(telegramUserId)) setIsAdmin(true);
     }).catch(() => {});
   }, []);
+
+  // Авторизація адмін-запису: у Telegram — підписаний initData; у браузері — токен
+  // (питаємо один раз, зберігаємо локально). null → нема чим авторизуватись.
+  const adminAuth = (): { initData?: string; token?: string } | null => {
+    if (isInTelegram) return { initData: initDataRaw() };
+    let token = localStorage.getItem(ADMIN_TOKEN_KEY) || '';
+    if (!token) {
+      token = (window.prompt('Адмін-токен каталогу:') || '').trim();
+      if (token) localStorage.setItem(ADMIN_TOKEN_KEY, token);
+    }
+    return token ? { token } : null;
+  };
+
+  // Швидкий перемикач публікації картки прямо в каталозі (оптимістично)
+  const handleTogglePublish = async (item: CatalogItem) => {
+    const auth = adminAuth();
+    if (!auth) return;
+    const next = !item.published;
+    try {
+      const r = await setCatalogPublication(
+        item.productnumber,
+        { is_published: next, is_featured: next ? item.featured : false },
+        auth,
+      );
+      patchItem(item.id, { published: r.is_published, featured: r.is_featured });
+      haptic('light');
+    } catch {
+      if (!isInTelegram) localStorage.removeItem(ADMIN_TOKEN_KEY);   // невірний токен — скинути
+      haptic('medium');
+      alert('Не вдалося оновити публікацію (перевірте адмін-токен/доступ).');
+    }
+  };
 
   // Нескінченний скрол: сторож унизу сітки
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -127,7 +167,7 @@ export const App = () => {
             <button
               type="button"
               className="chip"
-              onClick={() => { haptic('medium'); setQuery({ sort: query.sort, has_photo: query.has_photo }); }}
+              onClick={() => { haptic('medium'); setQuery({ sort: query.sort, has_photo: query.has_photo, only_published: query.only_published }); }}
             >
               Скинути фільтри <span className="x">✕</span>
             </button>
@@ -150,8 +190,9 @@ export const App = () => {
       )}
 
       <main className="grid">
-        {items.map((item) => (
-          <ProductCard key={item.id} item={item} onOpen={handleOpenProduct} />
+        {items.map((item, i) => (
+          <ProductCard key={item.id} item={item} onOpen={handleOpenProduct} priority={i < 4}
+            admin={isAdmin && adminWrites} onTogglePublish={handleTogglePublish} />
         ))}
         {isLoading && Array.from({ length: 6 }, (_, i) => <SkeletonCard key={`sk-${i}`} />)}
       </main>
@@ -183,6 +224,8 @@ export const App = () => {
         <ProductPage
           productId={productId}
           sellerUsername={sellerUsername}
+          sellerPhone={sellerPhone}
+          sellerInstagram={sellerInstagram}
           onBack={() => setProductId(null)}
         />
       )}

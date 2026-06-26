@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from database import get_db
-from images import list_images, main_image_url, photo_productnumbers
+from images import GALLERY_IMAGE_WIDTH, list_images, main_image_url, photo_productnumbers
 
 router = APIRouter()
 
@@ -50,6 +50,7 @@ _FULL_JOINS = f"""
         LEFT JOIN genders g ON p.genderid = g.id
         LEFT JOIN conditions cond ON cond.id = COALESCE(p.current_conditionid, p.conditionid)
         LEFT JOIN statuses s ON p.statusid = s.id
+        LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
         {_SOLD_JOIN}
 """
 
@@ -89,10 +90,16 @@ def _build_filters(
     min_cm: Optional[float],
     max_cm: Optional[float],
     has_photo: Optional[bool],
+    only_published: bool = True,
 ) -> tuple[str, Dict[str, Any]]:
     """Збирає додаткові WHERE-умови та параметри запиту."""
     conditions: List[str] = []
     params: Dict[str, Any] = {}
+
+    # Публічний каталог показує лише схвалені до публікації товари (catalog_listings).
+    # Адмін передає only_published=false, щоб бачити весь наявний пул для модерації.
+    if only_published:
+        conditions.append("COALESCE(cl.is_published, FALSE) = TRUE")
 
     if search and search.strip():
         # Розумний пошук: кожне слово запиту має збігтися хоча б з одним полем
@@ -100,8 +107,9 @@ def _build_filters(
         # опис). Регістр кирилиці згортаємо через ICU-колацію (звичайний lower/
         # ILIKE цього НЕ роблять у цій БД), unaccent — для латинських діакритик,
         # trigram (pg_trgm) на коротких полях — толерантність до помилок.
+        # extranote НЕ включаємо: це приватні нотатки — щоб їх не можна було «промацати» пошуком
         like_fields = [
-            "p.productnumber", "p.model", "p.description", "p.extranote", "p.marking",
+            "p.productnumber", "p.model", "p.description", "p.marking",
             "b.brandname", "t.typename", "st.subtypename", "sty.stylename",
             "c.colorname", "p.season", "g.gendername", "cond.conditionname",
         ]
@@ -209,15 +217,21 @@ async def get_catalog(
     # Дефолт True: публічний каталог НІКОЛИ не показує товар без фото.
     # Лише адмін явно передає has_photo=false, щоб бачити такі товари для правок.
     has_photo: bool = Query(True),
+    # Публіка бачить лише опубліковані; адмін передає only_published=false для модерації.
+    only_published: bool = Query(True),
     sort: str = Query("newest"),
     db: Session = Depends(get_db),
 ):
     """Список наявних товарів з фільтрами та пагінацією."""
     order_by = _SORTS.get(sort, _SORTS["newest"])
+    # «Рекомендовані» спливають угору лише у дефолтній (кураторській) сітці «Новинки»;
+    # при явному сортуванні за ціною поважаємо вибір користувача без піну.
+    if sort == "newest":
+        order_by = "BOOL_OR(COALESCE(cl.is_featured, FALSE)) DESC, " + order_by
     where_sql, params = _build_filters(
         search, typeids, subtypeids, brandids, genderids, color_group_ids,
         conditionids, seasons, eu_sizes, size_letters,
-        min_price, max_price, min_cm, max_cm, has_photo,
+        min_price, max_price, min_cm, max_cm, has_photo, only_published,
     )
 
     base_sql = f"{_FULL_JOINS} WHERE {_AVAILABLE_WHERE} {where_sql}"
@@ -234,7 +248,9 @@ async def get_catalog(
                    ARRAY_AGG(DISTINCT p.sizeeu) FILTER (WHERE p.sizeeu IS NOT NULL AND p.sizeeu <> '') AS sizes,
                    ARRAY_AGG(DISTINCT p.size_letter) FILTER (WHERE p.size_letter IS NOT NULL AND p.size_letter <> '') AS size_letters,
                    MIN(p.measurementscm) AS measurementscm,
-                   MIN(p.season) AS season, MIN(b.brandname) AS brandname, MIN(t.typename) AS typename
+                   MIN(p.season) AS season, MIN(b.brandname) AS brandname, MIN(t.typename) AS typename,
+                   BOOL_OR(COALESCE(cl.is_featured, FALSE)) AS featured,
+                   BOOL_OR(COALESCE(cl.is_published, FALSE)) AS published
             {base_sql}
             GROUP BY p.productnumber
             ORDER BY {order_by}
@@ -263,6 +279,8 @@ async def get_catalog(
             "measurementscm": r["measurementscm"],
             "season": r["season"],
             "image": main_image_url(r["productnumber"], r["official_photos_from"] or ""),
+            "featured": r["featured"],
+            "published": r["published"],   # для адмін-сітки (бачить пул і що ввімкнено)
         }
         for r in rows
     ]
@@ -276,14 +294,20 @@ async def get_catalog(
 
 
 @router.get("/api/catalog/filters")
-async def get_catalog_filters(db: Session = Depends(get_db)):
+async def get_catalog_filters(
+    only_published: bool = Query(True),
+    db: Session = Depends(get_db),
+):
     """Опції фільтрів, пораховані лише по наявних товарах (з кількістю)."""
     from_sql = f"""
         FROM products p
         LEFT JOIN statuses s ON p.statusid = s.id
+        LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
         {_SOLD_JOIN}
     """
-    base_sql = f"{from_sql} WHERE {_AVAILABLE_WHERE}"
+    # Публіка рахує опції лише по опублікованих; адмін — по всьому наявному пулу.
+    where_avail = _AVAILABLE_WHERE + (" AND COALESCE(cl.is_published, FALSE) = TRUE" if only_published else "")
+    base_sql = f"{from_sql} WHERE {where_avail}"
 
     def _options(join_table: str, join_on: str, id_col: str, name_col: str) -> List[Dict[str, Any]]:
         # Службові/порожні/плейсхолдерні назви ('???', 'Невідомо', 'Невизначено')
@@ -292,7 +316,7 @@ async def get_catalog_filters(db: Session = Depends(get_db)):
             SELECT x.{id_col} AS id, x.{name_col} AS name, COUNT(*) AS count
             {from_sql}
             JOIN {join_table} x ON {join_on}
-            WHERE {_AVAILABLE_WHERE}
+            WHERE {where_avail}
               AND x.{name_col} IS NOT NULL
               AND x.{name_col} NOT IN ('', '???', 'Невідомо', 'Невизначено')
             GROUP BY x.{id_col}, x.{name_col}
@@ -330,12 +354,22 @@ async def get_catalog_filters(db: Session = Depends(get_db)):
         {from_sql}
         JOIN color_group_members cgm ON cgm.color_id = p.colorid
         JOIN color_groups cg ON cg.id = cgm.group_id
-        WHERE {_AVAILABLE_WHERE}
+        WHERE {where_avail}
         GROUP BY cg.id, cg.name, cg.hex_code, cg.display_order
         ORDER BY cg.display_order
     """)).mappings().all()]
 
-    # EU-розміри у фільтрі — статична сітка цілих 14..53 (фронтенд), тут не рахуємо.
+    # EU-розміри — СТАБІЛЬНИЙ «всесвіт» (усі цілі EU, наявні в каталозі). Фронтенд
+    # малює цю фіксовану сітку завжди; динамічний фасет лише гасить недоступні —
+    # тож сітка не змінює розмір (нема «мелькання»).
+    eu_rows = db.execute(text(f"""
+        SELECT DISTINCT p.sizeeu {base_sql} AND p.sizeeu IS NOT NULL AND p.sizeeu <> ''
+    """)).scalars().all()
+    eu_wholes: set[int] = set()
+    for v in eu_rows:
+        eu_wholes.update(_sizeeu_to_wholes(v))
+    eu = sorted(w for w in eu_wholes if w >= 14)
+
     size_letters = [r["size_letter"] for r in db.execute(text(f"""
         SELECT DISTINCT p.size_letter {base_sql} AND p.size_letter IS NOT NULL AND p.size_letter <> ''
     """)).mappings().all()]
@@ -364,6 +398,7 @@ async def get_catalog_filters(db: Session = Depends(get_db)):
         "genders": genders,
         "conditions": conditions,
         "color_groups": color_groups,
+        "eu": eu,
         "size_letters": size_letters,
         "seasons": seasons,
         "price_range": dict(price_range) if price_range else {"min": 0, "max": 0},
@@ -406,6 +441,7 @@ async def get_facets(
     min_cm: Optional[float] = Query(None),
     max_cm: Optional[float] = Query(None),
     has_photo: bool = Query(True),
+    only_published: bool = Query(True),
     db: Session = Depends(get_db),
 ):
     """Динамічні фасети: EU-розміри, стать, кольорові групи — наявні в поточному
@@ -422,7 +458,7 @@ async def get_facets(
             conditionids, seasons,
             None if skip == "size" else eu_sizes,
             None if skip == "size" else size_letters,
-            min_price, max_price, min_cm, max_cm, has_photo,
+            min_price, max_price, min_cm, max_cm, has_photo, only_published,
         )
 
     # — Розмір: EU + буквений (виключаємо власний розмірний фільтр) —
@@ -474,12 +510,16 @@ async def get_facets(
 @router.get("/api/catalog/{product_id}")
 async def get_catalog_product(
     product_id: int = Path(..., ge=1),
+    only_published: bool = Query(True),
     db: Session = Depends(get_db),
 ):
     """Повна картка товару з фото та матеріалами."""
+    pub_clause = " AND COALESCE(cl.is_published, FALSE) = TRUE" if only_published else ""
     row = db.execute(
         text(f"""
             SELECT p.id, p.productnumber, p.official_photos_from, p.model, p.description,
+                   COALESCE(cl.is_published, FALSE) AS published,
+                   COALESCE(cl.is_featured, FALSE) AS featured,
                    p.price, p.oldprice, p.sizeeu, p.sizeua, p.measurementscm,
                    p.size_letter, p.season, p.year, p.width,
                    p.measurements_length_min, p.measurements_length_max,
@@ -498,8 +538,9 @@ async def get_catalog_product(
             LEFT JOIN colors c ON p.colorid = c.id
             LEFT JOIN conditions cond ON cond.id = COALESCE(p.current_conditionid, p.conditionid)
             LEFT JOIN statuses s ON p.statusid = s.id
+            LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
             {_SOLD_JOIN}
-            WHERE p.id = :product_id AND {_AVAILABLE_WHERE}
+            WHERE p.id = :product_id AND {_AVAILABLE_WHERE}{pub_clause}
         """),
         {"product_id": product_id},
     ).mappings().first()
@@ -521,7 +562,7 @@ async def get_catalog_product(
     for m in materials:
         materials_by_position.setdefault(m["position"], []).append(m["materialname"])
 
-    images = list_images(row["productnumber"], row["official_photos_from"] or "")
+    images = list_images(row["productnumber"], row["official_photos_from"] or "", width=GALLERY_IMAGE_WIDTH)
 
     # Усі наявні розміри цього номера (ростовка: один номер — кілька рядків)
     size_rows = db.execute(

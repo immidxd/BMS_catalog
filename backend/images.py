@@ -38,6 +38,16 @@ R2_PUBLIC_BASE_URL = os.environ.get("R2_PUBLIC_BASE_URL", "").strip().rstrip("/"
 # r2.dev його не підтримує → лишити порожнім; на власному домені напр. "width".
 R2_RESIZE_PARAM = os.environ.get("R2_RESIZE_PARAM", "").strip()
 
+# Cloudflare Image Resizing (/cdn-cgi/image) — доступний ЛИШЕ коли R2-бакет
+# відданий через ВЛАСНИЙ домен на Cloudflare (r2.dev НЕ підтримує). Увімкнення:
+# R2_IMAGE_RESIZE=1 + R2_PUBLIC_BASE_URL=<власний домен>. Тоді URL фото
+# трансформуються у потрібну ширину (виграш по байтах 5-10×), format=auto →
+# браузер сам отримує AVIF/WebP. Вимкнено (дефолт) → URL віддаються БЕЗ змін
+# (поточна перевірена поведінка). Ширини: картка в сітці vs фото на сторінці.
+R2_IMAGE_RESIZE = os.environ.get("R2_IMAGE_RESIZE", "").strip().lower() in ("1", "true", "yes", "on")
+CARD_IMAGE_WIDTH = 440       # головне фото картки (~210px @2x)
+GALLERY_IMAGE_WIDTH = 1080   # фото на сторінці товару (повна ширина @~2x)
+
 
 def get_images_dir() -> str:
     return os.environ.get("PRODUCT_IMAGES_DIR", DEFAULT_IMAGES_DIR)
@@ -58,6 +68,16 @@ def _photo_url(relpath: str, abs_path: str = "") -> str:
     ver = _file_version(abs_path) if abs_path else ""
     base = f"{R2_PUBLIC_BASE_URL}/{quote(relpath)}" if R2_PUBLIC_BASE_URL else f"{URL_PREFIX}/{quote(relpath)}"
     return base + ver
+
+
+def _with_width(url: str, width: int) -> str:
+    """Обгортає R2-URL у Cloudflare-трансформацію ширини (`/cdn-cgi/image`). Поза
+    увімкненим resize, без width або для не-R2 URL — повертає URL без змін (тобто
+    дефолтна поведінка лишається тією ж). `?v=` cache-bust їде у джерельному шляху."""
+    if not (R2_IMAGE_RESIZE and width and R2_PUBLIC_BASE_URL and url.startswith(R2_PUBLIC_BASE_URL)):
+        return url
+    rest = url[len(R2_PUBLIC_BASE_URL):].lstrip("/")   # шлях(+?v=) відносно домену
+    return f"{R2_PUBLIC_BASE_URL}/cdn-cgi/image/width={width},format=auto,quality=82/{rest}"
 
 
 @dataclass
@@ -144,8 +164,9 @@ def _get_index() -> Dict[str, List[Tuple[Tuple[int, int, str], ImageEntry]]]:
     return _index
 
 
-def list_images(productnumber: str, official_photos_from: str = "") -> List[ImageEntry]:
-    """Всі фото товару; донорські official підтягуються одним хопом (як у BMS)."""
+def list_images(productnumber: str, official_photos_from: str = "", width: int = 0) -> List[ImageEntry]:
+    """Всі фото товару; донорські official підтягуються одним хопом (як у BMS).
+    width > 0 → URL трансформуються під цю ширину (якщо R2_IMAGE_RESIZE)."""
     index = _get_index()
     own = list(index.get(_normalize(productnumber), []))
     donor_pnum = _normalize(official_photos_from)
@@ -153,12 +174,14 @@ def list_images(productnumber: str, official_photos_from: str = "") -> List[Imag
         own = [pair for pair in own if pair[1].kind != "official"]
         own += [pair for pair in index.get(donor_pnum, []) if pair[1].kind == "official"]
         own.sort(key=lambda pair: pair[0])
+    if width:
+        return [ImageEntry(e.filename, _with_width(e.url, width), e.kind) for _, e in own]
     return [entry for _, entry in own]
 
 
 def main_image_url(productnumber: str, official_photos_from: str = "") -> str | None:
-    """Головне фото для картки каталогу (перше за сортуванням)."""
-    images = list_images(productnumber, official_photos_from)
+    """Головне фото для картки каталогу (перше за сортуванням), у ширині картки."""
+    images = list_images(productnumber, official_photos_from, width=CARD_IMAGE_WIDTH)
     return images[0].url if images else None
 
 
