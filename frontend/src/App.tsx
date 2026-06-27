@@ -112,18 +112,24 @@ export const App = () => {
     }
   };
 
-  // Нескінченний скрол: сторож унизу сітки
+  // Нескінченний скрол: сторож унизу сітки. Перевіряємо близькість сторожа до
+  // видимої області І на скрол, І ОДРАЗУ після кожного завантаження (deps: items) —
+  // щоб заповнити екран і НЕ застрягати, коли сторож лишається у видимості після
+  // підвантаження (IntersectionObserver у такому разі повторно не спрацьовував).
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-    const observer = new IntersectionObserver(
-      (entries) => { if (entries[0].isIntersecting) loadMore(); },
-      { rootMargin: '600px' },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [loadMore]);
+    const maybeLoad = () => {
+      const s = sentinelRef.current;
+      if (s && s.getBoundingClientRect().top <= window.innerHeight + 800) loadMore();
+    };
+    maybeLoad();
+    window.addEventListener('scroll', maybeLoad, { passive: true });
+    window.addEventListener('resize', maybeLoad);
+    return () => {
+      window.removeEventListener('scroll', maybeLoad);
+      window.removeEventListener('resize', maybeLoad);
+    };
+  }, [loadMore, items]);
 
   const handleOpenProduct = (id: number) => {
     haptic('light');
