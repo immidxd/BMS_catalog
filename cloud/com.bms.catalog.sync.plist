@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Щогодинна синхронізація каталожного зрізу bsstorage → хмарна Postgres.
+  Працює тільки коли Mac увімкнений; пропущені запуски (сон/вимкнення) launchd
+  НЕ дублює — наступний цикл просто перезаливає актуальний стан (повний зріз).
+
+  Встановити:
+    cp cloud/com.bms.catalog.sync.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.bms.catalog.sync.plist
+  Прибрати:
+    launchctl unload ~/Library/LaunchAgents/com.bms.catalog.sync.plist
+  Запустити негайно (тест):
+    launchctl start com.bms.catalog.sync
+  Логи: /tmp/bms_catalog_sync.out / .err
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bms.catalog.sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/i.malashenko/Desktop/BMS_catalog/venv/bin/python</string>
+        <string>/Users/i.malashenko/Desktop/BMS_catalog/cloud/sync_to_cloud.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/i.malashenko/Desktop/BMS_catalog</string>
+
+    <!-- Щогодини о :00 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/bms_catalog_sync.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/bms_catalog_sync.err</string>
+</dict>
+</plist>

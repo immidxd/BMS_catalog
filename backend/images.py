@@ -63,11 +63,10 @@ def _file_version(abs_path: str) -> str:
         return ""
 
 
-def _photo_url(relpath: str, abs_path: str = "") -> str:
-    """URL фото: R2 CDN якщо налаштовано, інакше локальний статик-маунт. + ?v=."""
-    ver = _file_version(abs_path) if abs_path else ""
+def _photo_url(relpath: str, version: str = "") -> str:
+    """URL фото: R2 CDN якщо налаштовано, інакше локальний статик-маунт. + готовий ?v=."""
     base = f"{R2_PUBLIC_BASE_URL}/{quote(relpath)}" if R2_PUBLIC_BASE_URL else f"{URL_PREFIX}/{quote(relpath)}"
-    return base + ver
+    return base + (version or "")
 
 
 def _with_width(url: str, width: int) -> str:
@@ -125,38 +124,56 @@ _official_photo_keys: set[str] = set()
 _index_built_at: float = 0.0
 
 
+def _iter_photo_records():
+    """Джерело списку фото → (relpath, version). Локально — `os.walk` диска; у хмарі
+    (CATALOG_IMAGES_SOURCE=db) — таблиця catalog_images, яку наповнює щогодинний
+    синхрон (бо локального диска у хмарі нема). Логіка парсингу далі однакова."""
+    if os.environ.get("CATALOG_IMAGES_SOURCE", "").strip().lower() == "db":
+        from database import SessionLocal  # ліниво: уникаємо циклічного імпорту
+        from sqlalchemy import text
+        db = SessionLocal()
+        try:
+            for relpath, version in db.execute(text("SELECT relpath, version FROM catalog_images")):
+                yield relpath, (version or "")
+        finally:
+            db.close()
+        return
+    root = get_images_dir()
+    if not os.path.isdir(root):
+        return
+    # Рекурсивно: фото розкладені по підпапках-категоріях під коренем «Товар»
+    for dirpath, _dirs, files in os.walk(root):
+        for fname in files:
+            if os.path.splitext(fname)[1].lower() not in IMAGE_EXTENSIONS:
+                continue
+            abs_path = os.path.join(dirpath, fname)
+            relpath = os.path.relpath(abs_path, root)  # включає підпапку
+            yield relpath, _file_version(abs_path)
+
+
 def _build_index() -> Dict[str, List[Tuple[Tuple[int, int, str], ImageEntry]]]:
     index: Dict[str, List[Tuple[Tuple[int, int, str], ImageEntry]]] = {}
     photo_keys: set[str] = set()
     official_keys: set[str] = set()
-    root = get_images_dir()
-    if not os.path.isdir(root):
-        _photo_keys.clear()
-        _official_photo_keys.clear()
-        return index
-    # Рекурсивно: фото розкладені по підпапках-категоріях під коренем «Товар»
-    for dirpath, _dirs, files in os.walk(root):
-        for fname in files:
-            base, ext = os.path.splitext(fname)
-            if ext.lower() not in IMAGE_EXTENSIONS:
-                continue
-            stripped = base.lstrip("#")
-            # Номер товару — все до першого розділювача `_`, `.` або пробілу
-            m = re.match(r"^([^_.\s]+)(.*)$", stripped)
-            if not m:
-                continue
-            raw_pnum, suffix = m.group(1).strip(), m.group(2)
-            pnum, kind = _normalize(raw_pnum), _classify(suffix)
-            # URL включає шлях відносно кореня (з підпапкою), '/' не кодуємо
-            abs_path = os.path.join(dirpath, fname)
-            relpath = os.path.relpath(abs_path, root)
-            entry = ImageEntry(filename=fname, url=_photo_url(relpath, abs_path), kind=kind)
-            index.setdefault(pnum, []).append((_sort_key(suffix, kind, base), entry))
-            photo_keys.add(raw_pnum)
-            photo_keys.add(raw_pnum.lower())
-            if kind == "official":
-                official_keys.add(raw_pnum)
-                official_keys.add(raw_pnum.lower())
+    for relpath, version in _iter_photo_records():
+        fname = os.path.basename(relpath)
+        base, ext = os.path.splitext(fname)
+        if ext.lower() not in IMAGE_EXTENSIONS:
+            continue
+        stripped = base.lstrip("#")
+        # Номер товару — все до першого розділювача `_`, `.` або пробілу
+        m = re.match(r"^([^_.\s]+)(.*)$", stripped)
+        if not m:
+            continue
+        raw_pnum, suffix = m.group(1).strip(), m.group(2)
+        pnum, kind = _normalize(raw_pnum), _classify(suffix)
+        entry = ImageEntry(filename=fname, url=_photo_url(relpath, version), kind=kind)
+        index.setdefault(pnum, []).append((_sort_key(suffix, kind, base), entry))
+        photo_keys.add(raw_pnum)
+        photo_keys.add(raw_pnum.lower())
+        if kind == "official":
+            official_keys.add(raw_pnum)
+            official_keys.add(raw_pnum.lower())
     for entries in index.values():
         entries.sort(key=lambda pair: pair[0])
     _photo_keys.clear()

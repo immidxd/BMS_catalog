@@ -1,0 +1,10 @@
+venv/
+**/node_modules/
+frontend/dist/
+.git/
+.env
+*.pyc
+__pycache__/
+.tools/
+cloud/*.out
+cloud/*.err

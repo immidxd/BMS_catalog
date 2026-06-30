@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Змінні середовища для ХМАРНОГО каталогу (вставити в Railway/Render → Variables).
+#  НЕ комітити з реальними значеннями. Локальний .env лишається окремим.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Хмарна Postgres (Neon): повний рядок з SSL. Database.py бере його напряму.
+DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
+
+# Фото — з R2 CDN (вже працює локально, та сама адреса)
+R2_PUBLIC_BASE_URL=https://pub-2002131bdaa64e7cb898ccac677a16e8.r2.dev
+
+# Індекс фото у хмарі береться з БД (диска нема). Синхрон заповнює таблицю catalog_images.
+CATALOG_IMAGES_SOURCE=db
+
+# Адмін-модерація з каталогу (той самий токен, що локально)
+CATALOG_ADMIN_TOKEN=<той самий, що в локальному .env>
+
+# Telegram-бот: перевірка initData адміна + хто адмін
+BOT_TOKEN=<твій BOT_TOKEN>
+ADMIN_TG_IDS=766150893
+
+# Канали «Замовити» (заповнити реальними; порожні — кнопка не показується)
+SELLER_TG_USERNAME=branstore_manager
+SELLER_PHONE=
+SELLER_INSTAGRAM=
+SELLER_VIBER=
+
+# Назва магазину (заголовок)
+SHOP_NAME=
+
+# Swagger лишити вимкненим на проді (не задавати CATALOG_ENABLE_DOCS)
