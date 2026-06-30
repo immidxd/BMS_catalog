@@ -123,6 +123,26 @@ def _build_filters(
             params[trgm_key] = token
             ors = [f"{norm(f)} LIKE unaccent(:{like_key})" for f in like_fields]
             ors += [f"{norm(f)} % unaccent(:{trgm_key})" for f in trgm_fields]
+            # Кирилична транслітерація бренду («найк»→Nike, «адідас»→Adidas): бренди в
+            # БД латиницею, а pg_trgm НЕ генерує тригерми для кирилиці. Тож токен резолвимо
+            # у brand_id через спільну brand_aliases (її ж читає BMS-парсер): точний збіг,
+            # підрядковий (множина/багатослівні «нью баланс») і levenshtein≤1 (одруки).
+            ntok = f"unaccent(:{trgm_key})"
+            nalias = norm("ba.alias_name")
+            strict = (  # точний або підрядковий збіг аліаса (множина/багатослівні)
+                f"{nalias} = {ntok} "
+                f"OR (length({ntok}) >= 4 AND {nalias} LIKE '%' || {ntok} || '%') "
+                f"OR (length({nalias}) >= 4 AND {ntok} LIKE '%' || {nalias} || '%')"
+            )
+            ors.append(f"p.brandid IN (SELECT ba.brand_id FROM brand_aliases ba WHERE {strict})")
+            # levenshtein — лише РЕЗЕРВ (коли строгого збігу нема), щоб одрук «адидс»→Adidas
+            # ловився, але точний «крокс» не тягнув ще й сусідній «брокс»→Brooks.
+            ors.append(
+                f"(length({ntok}) >= 4 "
+                f"AND NOT EXISTS (SELECT 1 FROM brand_aliases ba WHERE {strict}) "
+                f"AND p.brandid IN (SELECT ba.brand_id FROM brand_aliases ba "
+                f"WHERE levenshtein({nalias}, {ntok}) <= 1))"
+            )
             token_clauses.append("(" + " OR ".join(ors) + ")")
         conditions.append("(" + " AND ".join(token_clauses) + ")")
     if typeids:
