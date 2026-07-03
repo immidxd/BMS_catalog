@@ -44,15 +44,14 @@ export const App = () => {
   const [facets, setFacets] = useState<Facets | null>(null);
 
   const debouncedSearch = useDebounced(search);
+  const effSearch = debouncedSearch.trim().length >= 2 ? debouncedSearch.trim() : undefined;
   // Мемоізація обов'язкова: новий об'єкт на кожен рендер зациклив би useCatalog
   const effectiveQuery = useMemo(
-    // Пошук вмикається від 2 символів: один символ дає шумну/безглузду видачу
-    () => ({
-      ...query,
-      search: debouncedSearch.trim().length >= 2 ? debouncedSearch.trim() : undefined,
-      group_offers: !isAdmin,
-    }),
-    [query, debouncedSearch, isAdmin],
+    // Пошук вмикається від 2 символів: один символ дає шумну/безглузду видачу.
+    // effSearch — примітив у deps: поки він не змінився (напр. 1 символ → undefined),
+    // об'єкт запиту НЕ перестворюється і сітка не рефетчиться (не «мигає»).
+    () => ({ ...query, search: effSearch, group_offers: !isAdmin }),
+    [query, effSearch, isAdmin],
   );
   const { items, total, isLoading, error, loadMore, retry, patchItem } = useCatalog(effectiveQuery);
 

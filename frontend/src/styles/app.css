@@ -588,7 +588,7 @@ button {
   cursor: not-allowed;
   pointer-events: none;
 }
-.color-swatch.unavail:hover { transform: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.10); }
+.color-swatch.unavail:hover { transform: none; box-shadow: 0 0 0 1px var(--border); }
 
 /* ── Чіпи статі — іконки з кольоровим відтінком при активації (як у BMS) ──── */
 .gender-chips { display: flex; gap: var(--space-2); }
@@ -655,12 +655,12 @@ button {
   width: 100%;
   aspect-ratio: 1;
   border-radius: var(--radius-md);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.10);
+  /* Нейтральна темозалежна обводка: біле кільце на темній темі робило з чорного
+     кольору «артефакт». var(--border) делікатно окреслює квадрат у будь-якій темі. */
+  box-shadow: 0 0 0 1px var(--border);
   transition: box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
-[data-theme='dark'] .color-swatch { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16); }
-.color-swatch.white { box-shadow: 0 0 0 1px var(--border); }
-.color-swatch:hover { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.30); }
+.color-swatch:hover { box-shadow: 0 0 0 1px var(--fg-subtle); }
 .color-swatch:active { transform: scale(0.93); }
 /* Активний — кільце кольору бренду з відступом */
 .color-swatch.active,
@@ -790,8 +790,6 @@ button {
     border-radius: var(--radius-full);
     background: rgba(0, 0, 0, 0.4);
     color: #ffffff;
-    font-size: 22px;
-    line-height: 1;
     backdrop-filter: blur(4px);
     opacity: 0.45;
     transition: opacity var(--dur-med) var(--ease), background var(--dur-fast) var(--ease);

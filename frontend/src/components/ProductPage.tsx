@@ -182,9 +182,9 @@ export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInst
         {product.images.length > 1 && (
           <>
             <button type="button" className="gallery-arrow prev" aria-label="Попереднє фото"
-              onClick={() => goToSlide(slide - 1)}>‹</button>
+              onClick={() => goToSlide(slide - 1)}><ChevronIcon dir="left" /></button>
             <button type="button" className="gallery-arrow next" aria-label="Наступне фото"
-              onClick={() => goToSlide(slide + 1)}>›</button>
+              onClick={() => goToSlide(slide + 1)}><ChevronIcon dir="right" /></button>
             <div className="gallery-dots">
               {product.images.map((img, i) => (
                 <button type="button" key={img.url}
@@ -292,6 +292,12 @@ export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInst
     </div>
   );
 };
+
+const ChevronIcon = ({ dir }: { dir: 'left' | 'right' }) => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {dir === 'left' ? <polyline points="15 18 9 12 15 6" /> : <polyline points="9 18 15 12 9 6" />}
+  </svg>
+);
 
 const PhoneIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
