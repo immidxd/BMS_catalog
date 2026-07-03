@@ -105,6 +105,8 @@ export type CatalogQuery = {
   max_price?: number;
   has_photo?: boolean;
   only_published?: boolean;   // публіка=true; адмін може вимкнути, щоб бачити весь пул
+  // публіка=true (зливаємо дублі-завози в одну картку); адмін=false (кожен номер окремо)
+  group_offers?: boolean;
   sort?: 'newest' | 'price_asc' | 'price_desc';
 };
 
@@ -149,7 +151,7 @@ export const fetchFacets = (query: CatalogQuery): Promise<Facets> =>
 // admin=true → дозволяє відкрити деталь ЩЕ НЕ опублікованого товару (для модерації);
 // інакше неопублікований → 404 (публіці не доступний).
 export const fetchProduct = (id: number, admin = false): Promise<ProductDetail> =>
-  fetchJson(`/api/catalog/${id}${admin ? '?only_published=false' : ''}`);
+  fetchJson(`/api/catalog/${id}${admin ? '?only_published=false&group_offers=false' : ''}`);
 
 export const fetchConfig = (): Promise<{
   seller_username: string; seller_phone: string; seller_instagram: string; seller_viber: string;

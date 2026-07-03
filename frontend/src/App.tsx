@@ -46,8 +46,8 @@ export const App = () => {
   const debouncedSearch = useDebounced(search);
   // Мемоізація обов'язкова: новий об'єкт на кожен рендер зациклив би useCatalog
   const effectiveQuery = useMemo(
-    () => ({ ...query, search: debouncedSearch || undefined }),
-    [query, debouncedSearch],
+    () => ({ ...query, search: debouncedSearch || undefined, group_offers: !isAdmin }),
+    [query, debouncedSearch, isAdmin],
   );
   const { items, total, isLoading, error, loadMore, retry, patchItem } = useCatalog(effectiveQuery);
 

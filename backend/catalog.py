@@ -73,6 +73,32 @@ _SORTS = {
     "price_desc": "MAX(p.price) DESC, MIN(p.id) DESC",
 }
 
+# Сортування ЗОВНІШНЬОГО рівня — над агрегованими по номеру рядками (per_number)
+_OUTER_SORTS = {
+    "newest": "MAX(dateadded) DESC NULLS LAST, MIN(id) DESC",
+    "price_asc": "MIN(price) ASC, MIN(id) DESC",
+    "price_desc": "MAX(price) DESC, MIN(id) DESC",
+}
+
+# «Підпис торгової пропозиції» (псевдоніми per_number): бренд+тип+колір+модель+
+# сезон+ціна+стан. За ним різні номери (різні завози ІДЕНТИЧНОГО товару в тому ж
+# стані й за тією ж ціною) зливаються в ОДНУ публічну картку. Адмін
+# (group_offers=false) бачить кожен номер окремо — для поштучного керування.
+_OFFER_SIG = "brandid, typeid, colorid, model_key, season_key, price, cond_key"
+
+
+def _pick_representative(members: List[Dict[str, Any]]) -> tuple[Dict[str, Any], Optional[str]]:
+    """Серед злитих в одну картку номерів обираємо представника: пріоритет —
+    студійне (official) головне фото, далі будь-яке фото, далі без фото. Його id
+    і фото йдуть у картку (узгоджено: студійні в пріоритеті)."""
+    best_rank, best = 9, members[0]
+    for m in members:
+        imgs = list_images(m["pn"], m.get("of") or "")
+        rank = 0 if (imgs and imgs[0].kind == "official") else (1 if imgs else 2)
+        if rank < best_rank:
+            best_rank, best = rank, m
+    return best, main_image_url(best["pn"], best.get("of") or "")
+
 
 def _build_filters(
     search: Optional[str],
@@ -240,15 +266,19 @@ async def get_catalog(
     has_photo: bool = Query(True),
     # Публіка бачить лише опубліковані; адмін передає only_published=false для модерації.
     only_published: bool = Query(True),
+    # Публічна вітрина (True): різні номери ідентичного товару зливаються в одну
+    # картку. Адмін (False): кожен номер окремо — для поштучного керування.
+    group_offers: bool = Query(True),
     sort: str = Query("newest"),
     db: Session = Depends(get_db),
 ):
     """Список наявних товарів з фільтрами та пагінацією."""
-    order_by = _SORTS.get(sort, _SORTS["newest"])
+    order_by = _OUTER_SORTS.get(sort, _OUTER_SORTS["newest"])
     # «Рекомендовані» спливають угору лише у дефолтній (кураторській) сітці «Новинки»;
     # при явному сортуванні за ціною поважаємо вибір користувача без піну.
     if sort == "newest":
-        order_by = "BOOL_OR(COALESCE(cl.is_featured, FALSE)) DESC, " + order_by
+        order_by = "BOOL_OR(featured) DESC, " + order_by
+    group_key = _OFFER_SIG if group_offers else "productnumber"
     where_sql, params = _build_filters(
         search, typeids, subtypeids, brandids, genderids, color_group_ids,
         conditionids, seasons, eu_sizes, size_letters,
@@ -257,12 +287,10 @@ async def get_catalog(
 
     base_sql = f"{_FULL_JOINS} WHERE {_AVAILABLE_WHERE} {where_sql}"
 
-    total = db.execute(
-        text(f"SELECT COUNT(DISTINCT p.productnumber) {base_sql}"), params
-    ).scalar() or 0
-
-    rows = db.execute(
-        text(f"""
+    # Внутрішній рівень: агрегуємо рядки-розміри по номеру (як було). Зовнішній:
+    # групуємо номери у пропозицію за підписом (або лишаємо по номеру для адміна).
+    per_number = f"""
+        WITH per_number AS (
             SELECT MIN(p.id) AS id, p.productnumber,
                    MIN(p.official_photos_from) AS official_photos_from,
                    MIN(p.model) AS model, MIN(p.price) AS price, MAX(p.oldprice) AS oldprice,
@@ -270,10 +298,35 @@ async def get_catalog(
                    ARRAY_AGG(DISTINCT p.size_letter) FILTER (WHERE p.size_letter IS NOT NULL AND p.size_letter <> '') AS size_letters,
                    MIN(p.measurementscm) AS measurementscm,
                    MIN(p.season) AS season, MIN(b.brandname) AS brandname, MIN(t.typename) AS typename,
+                   MAX(p.dateadded) AS dateadded,
                    BOOL_OR(COALESCE(cl.is_featured, FALSE)) AS featured,
-                   BOOL_OR(COALESCE(cl.is_published, FALSE)) AS published
+                   BOOL_OR(COALESCE(cl.is_published, FALSE)) AS published,
+                   MIN(p.brandid) AS brandid, MIN(p.typeid) AS typeid, MIN(p.colorid) AS colorid,
+                   lower(btrim(coalesce(MIN(p.model), ''))) AS model_key,
+                   lower(btrim(coalesce(MIN(p.season), ''))) AS season_key,
+                   MIN(COALESCE(p.current_conditionid, p.conditionid)) AS cond_key
             {base_sql}
             GROUP BY p.productnumber
+        )
+    """
+
+    total = db.execute(text(
+        f"{per_number} SELECT COUNT(*) FROM (SELECT 1 FROM per_number GROUP BY {group_key}) t"
+    ), params).scalar() or 0
+
+    rows = db.execute(
+        text(f"""
+            {per_number}
+            SELECT jsonb_agg(jsonb_build_object(
+                       'id', id, 'pn', productnumber, 'of', coalesce(official_photos_from, ''),
+                       'sizes', sizes, 'size_letters', size_letters
+                   ) ORDER BY id) AS members,
+                   MIN(model) AS model, MIN(price) AS price, MAX(oldprice) AS oldprice,
+                   MIN(season) AS season, MIN(brandname) AS brandname, MIN(typename) AS typename,
+                   MIN(measurementscm) AS measurementscm,
+                   BOOL_OR(featured) AS featured, BOOL_OR(published) AS published
+            FROM per_number
+            GROUP BY {group_key}
             ORDER BY {order_by}
             LIMIT :limit OFFSET :offset
         """),
@@ -286,25 +339,28 @@ async def get_catalog(
         except ValueError:
             return 999.0
 
-    items = [
-        {
-            "id": r["id"],
-            "productnumber": r["productnumber"],
+    items = []
+    for r in rows:
+        members = r["members"] or []
+        sizes = sorted({s for m in members for s in (m.get("sizes") or [])}, key=_size_sort_key)
+        size_letters = sorted({l for m in members for l in (m.get("size_letters") or [])})
+        rep, image = _pick_representative(members)
+        items.append({
+            "id": rep["id"],
+            "productnumber": rep["pn"],
             "model": r["model"],
             "brand": r["brandname"],
             "type": r["typename"],
             "price": r["price"],
             "oldprice": r["oldprice"],
-            "sizes": sorted(r["sizes"] or [], key=_size_sort_key),
-            "size_letters": r["size_letters"] or [],
+            "sizes": sizes,
+            "size_letters": size_letters,
             "measurementscm": r["measurementscm"],
             "season": r["season"],
-            "image": main_image_url(r["productnumber"], r["official_photos_from"] or ""),
+            "image": image,
             "featured": r["featured"],
             "published": r["published"],   # для адмін-сітки (бачить пул і що ввімкнено)
-        }
-        for r in rows
-    ]
+        })
 
     return {
         "items": items,
@@ -532,6 +588,8 @@ async def get_facets(
 async def get_catalog_product(
     product_id: int = Path(..., ge=1),
     only_published: bool = Query(True),
+    # True (публічна вітрина): розміри збираємо по всіх номерах тієї ж пропозиції.
+    group_offers: bool = Query(True),
     db: Session = Depends(get_db),
 ):
     """Повна картка товару з фото та матеріалами."""
@@ -541,6 +599,8 @@ async def get_catalog_product(
             SELECT p.id, p.productnumber, p.official_photos_from, p.model, p.description,
                    COALESCE(cl.is_published, FALSE) AS published,
                    COALESCE(cl.is_featured, FALSE) AS featured,
+                   p.brandid, p.typeid, p.colorid,
+                   COALESCE(p.current_conditionid, p.conditionid) AS sig_cond,
                    p.price, p.oldprice, p.sizeeu, p.sizeua, p.measurementscm,
                    p.size_letter, p.season, p.year, p.width, p.dimensions,
                    p.measurements_length_min, p.measurements_length_max,
@@ -585,23 +645,59 @@ async def get_catalog_product(
 
     images = list_images(row["productnumber"], row["official_photos_from"] or "", width=GALLERY_IMAGE_WIDTH)
 
-    # Усі наявні розміри цього номера (ростовка: один номер — кілька рядків)
+    # Розміри: для номера (ростовка) АБО для всіх номерів тієї ж пропозиції
+    # (group_offers) — щоб злита картка показувала повну ростовку всіх завозів.
     size_rows = db.execute(
         text(f"""
             SELECT p.id, p.sizeeu, p.sizeua, p.size_letter, p.measurementscm,
                    GREATEST(COALESCE(p.quantity, 0) - COALESCE(sold.sold_count, 0), 0) AS available
             FROM products p
             LEFT JOIN statuses s ON p.statusid = s.id
+            LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
             {_SOLD_JOIN}
-            WHERE p.productnumber = :pnum AND {_AVAILABLE_WHERE}
+            WHERE {_AVAILABLE_WHERE}{pub_clause} AND (
+                (NOT :group_offers AND p.productnumber = :pnum)
+                OR (:group_offers
+                    AND p.brandid IS NOT DISTINCT FROM :brandid
+                    AND p.typeid IS NOT DISTINCT FROM :typeid
+                    AND p.colorid IS NOT DISTINCT FROM :colorid
+                    AND lower(btrim(coalesce(p.model, ''))) = lower(btrim(coalesce(:model_raw, '')))
+                    AND lower(btrim(coalesce(p.season, ''))) = lower(btrim(coalesce(:season_raw, '')))
+                    AND p.price IS NOT DISTINCT FROM :price
+                    AND COALESCE(p.current_conditionid, p.conditionid) IS NOT DISTINCT FROM :cond)
+            )
             ORDER BY p.sizeeu NULLS LAST, p.id
         """),
-        {"pnum": row["productnumber"]},
+        {
+            "group_offers": group_offers, "pnum": row["productnumber"],
+            "brandid": row["brandid"], "typeid": row["typeid"], "colorid": row["colorid"],
+            "model_raw": row["model"], "season_raw": row["season"],
+            "price": row["price"], "cond": row["sig_cond"],
+        },
     ).mappings().all()
 
+    # Дедуплікація за САМИМ розміром (як він у чіпі), БЕЗ устілки в см — інакше
+    # «43-44 EU» з трохи різним обміром (27-27.5 vs 27-28 см) дублювався б. Ключ:
+    # EU → літера → см (для дитячих/без EU, де розмір задає саме см).
+    def _size_identity(r) -> tuple:
+        if r["sizeeu"]:
+            return ("eu", r["sizeeu"].replace(" ", ""))
+        if r["size_letter"]:
+            return ("letter", r["size_letter"])
+        return ("cm", r["measurementscm"])
+
+    seen, size_variants = set(), []
+    for r in size_rows:
+        key = _size_identity(r)
+        if key in seen:
+            continue
+        seen.add(key)
+        size_variants.append(dict(r))
+
+    skip = {"official_photos_from", "brandid", "typeid", "colorid", "sig_cond"}
     return {
-        **{k: row[k] for k in row.keys() if k != "official_photos_from"},
+        **{k: row[k] for k in row.keys() if k not in skip},
         "materials": materials_by_position,
         "images": [{"url": img.url, "kind": img.kind} for img in images],
-        "size_variants": [dict(r) for r in size_rows],
+        "size_variants": size_variants,
     }
