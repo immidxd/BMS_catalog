@@ -141,6 +141,21 @@ export const App = () => {
     setQuery((q) => ({ ...q, sort }));
   };
 
+  // Швидкі чіпи-фільтри одним тапом: тип «Сумки» і сезон «Літо». Id типу беремо
+  // з фасетів за назвою (не хардкодимо), тож чіп зникає, якщо сумок немає в наявності.
+  const bagType = filterOptions?.types.find((t) => t.name === 'Сумка');
+  const bagsActive = !!bagType && query.typeids?.length === 1 && query.typeids[0] === bagType.id;
+  const summerActive = query.seasons?.length === 1 && query.seasons[0] === 'Літо';
+  const toggleBags = () => {
+    if (!bagType) return;
+    hapticSelect();
+    setQuery((q) => ({ ...q, typeids: bagsActive ? undefined : [bagType.id] }));
+  };
+  const toggleSummer = () => {
+    hapticSelect();
+    setQuery((q) => ({ ...q, seasons: summerActive ? undefined : ['Літо'] }));
+  };
+
   const activeCount = countActiveFilters(query);
 
   return (
@@ -180,6 +195,16 @@ export const App = () => {
               {sort.label}
             </button>
           ))}
+          {bagType && (
+            <button type="button" className={`chip${bagsActive ? ' active' : ''}`} onClick={toggleBags}>
+              Сумки
+            </button>
+          )}
+          {filterOptions?.seasons.includes('Літо') && (
+            <button type="button" className={`chip${summerActive ? ' active' : ''}`} onClick={toggleSummer}>
+              Літо
+            </button>
+          )}
           {activeCount > 0 && (
             <button
               type="button"
