@@ -123,6 +123,33 @@ button {
   scrollbar-width: none;
 }
 .chips-row::-webkit-scrollbar { display: none; }
+/* Мишка: горизонтальний скрол чіпів колесом незручний — переносимо рядками */
+@media (hover: hover) and (pointer: fine) {
+  .chips-row { flex-wrap: wrap; }
+}
+
+/* Розміри в наявності: ІНФОРМАЦІЙНІ пігулки (не кнопки-фільтри, щоб не плутати
+   з вибором). Зелена крапка = розмір є в наявності. */
+.size-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-alt);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.size-pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  flex: none;
+}
+.size-pill .option-count { color: var(--fg-subtle); font-weight: 400; }
 
 .chip {
   display: inline-flex;
@@ -746,8 +773,34 @@ button {
 }
 .number-pill:hover { background: rgba(0, 0, 0, 0.6); }
 
-/* Стрілки галереї — лише десктоп (на моб. — свайп) */
+/* Стрілки галереї — для мишки (будь-яка ширина вікна); на тачі — свайп.
+   Помітні одразу (opacity .45), яскравішають при наведенні на галерею. */
 .gallery-arrow { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .gallery-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 4;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-full);
+    background: rgba(0, 0, 0, 0.4);
+    color: #ffffff;
+    font-size: 22px;
+    line-height: 1;
+    backdrop-filter: blur(4px);
+    opacity: 0.45;
+    transition: opacity var(--dur-med) var(--ease), background var(--dur-fast) var(--ease);
+  }
+  .gallery:hover .gallery-arrow { opacity: 1; }
+  .gallery-arrow:hover { background: rgba(0, 0, 0, 0.62); }
+  .gallery-arrow.prev { left: var(--space-3); }
+  .gallery-arrow.next { right: var(--space-3); }
+}
 
 .gallery-dots {
   display: flex;
@@ -931,30 +984,6 @@ button {
   .product-sheet .gallery-dots { background: transparent; position: relative; z-index: 3; }
   .product-sheet .dot::before { background: rgba(0, 0, 0, 0.22); }
   .product-sheet .dot.active::before { background: rgba(0, 0, 0, 0.7); }
-  /* Стрілки навігації галереї */
-  .gallery-arrow {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 4;
-    width: 36px;
-    height: 36px;
-    border-radius: var(--radius-full);
-    background: rgba(0, 0, 0, 0.4);
-    color: #ffffff;
-    font-size: 22px;
-    line-height: 1;
-    backdrop-filter: blur(4px);
-    opacity: 0;
-    transition: opacity var(--dur-med) var(--ease), background var(--dur-fast) var(--ease);
-  }
-  .product-sheet .gallery:hover .gallery-arrow { opacity: 1; }
-  .gallery-arrow:hover { background: rgba(0, 0, 0, 0.62); }
-  .gallery-arrow.prev { left: var(--space-3); }
-  .gallery-arrow.next { right: var(--space-3); }
   /* Права панель — власна прокрутка */
   .product-side {
     height: 100%;

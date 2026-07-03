@@ -215,7 +215,7 @@ export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInst
             <h3>Розміри в наявності</h3>
             <div className="filter-options">
               {product.size_variants.map((variant) => (
-                <span className="chip active" key={variant.id}>
+                <span className="size-pill" key={variant.id}>
                   {variantLabel(variant)}
                   {variant.measurementscm && variant.sizeeu && (
                     <span className="option-count">{variant.measurementscm} см</span>
