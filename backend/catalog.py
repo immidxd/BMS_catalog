@@ -87,17 +87,19 @@ _OUTER_SORTS = {
 _OFFER_SIG = "brandid, typeid, colorid, model_key, season_key, price, cond_key"
 
 
-def _pick_representative(members: List[Dict[str, Any]]) -> tuple[Dict[str, Any], Optional[str]]:
+def _pick_representative(members: List[Dict[str, Any]],
+                         official_only: bool = False) -> tuple[Dict[str, Any], Optional[str]]:
     """Серед злитих в одну картку номерів обираємо представника: пріоритет —
     студійне (official) головне фото, далі будь-яке фото, далі без фото. Його id
-    і фото йдуть у картку (узгоджено: студійні в пріоритеті)."""
+    і фото йдуть у картку (узгоджено: студійні в пріоритеті). official_only —
+    публічна вітрина: картці дозволене лише студійне фото (реальні — тільки адміну)."""
     best_rank, best = 9, members[0]
     for m in members:
         imgs = list_images(m["pn"], m.get("of") or "")
         rank = 0 if (imgs and imgs[0].kind == "official") else (1 if imgs else 2)
         if rank < best_rank:
             best_rank, best = rank, m
-    return best, main_image_url(best["pn"], best.get("of") or "")
+    return best, main_image_url(best["pn"], best.get("of") or "", official_only=official_only)
 
 
 def _build_filters(
@@ -344,7 +346,7 @@ async def get_catalog(
         members = r["members"] or []
         sizes = sorted({s for m in members for s in (m.get("sizes") or [])}, key=_size_sort_key)
         size_letters = sorted({l for m in members for l in (m.get("size_letters") or [])})
-        rep, image = _pick_representative(members)
+        rep, image = _pick_representative(members, official_only=only_published)
         items.append({
             "id": rep["id"],
             "productnumber": rep["pn"],
@@ -643,7 +645,9 @@ async def get_catalog_product(
     for m in materials:
         materials_by_position.setdefault(m["position"], []).append(m["materialname"])
 
-    images = list_images(row["productnumber"], row["official_photos_from"] or "", width=GALLERY_IMAGE_WIDTH)
+    # Публіці (only_published) — ЛИШЕ студійні фото; «реальні»/«нюанси» бачить тільки адмін
+    images = list_images(row["productnumber"], row["official_photos_from"] or "",
+                         width=GALLERY_IMAGE_WIDTH, official_only=only_published)
 
     # Розміри: для номера (ростовка) АБО для всіх номерів тієї ж пропозиції
     # (group_offers) — щоб злита картка показувала повну ростовку всіх завозів.

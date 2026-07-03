@@ -191,9 +191,12 @@ def _get_index() -> Dict[str, List[Tuple[Tuple[int, int, str], ImageEntry]]]:
     return _index
 
 
-def list_images(productnumber: str, official_photos_from: str = "", width: int = 0) -> List[ImageEntry]:
+def list_images(productnumber: str, official_photos_from: str = "", width: int = 0,
+                official_only: bool = False) -> List[ImageEntry]:
     """Всі фото товару; донорські official підтягуються одним хопом (як у BMS).
-    width > 0 → URL трансформуються під цю ширину (якщо R2_IMAGE_RESIZE)."""
+    width > 0 → URL трансформуються під цю ширину (якщо R2_IMAGE_RESIZE).
+    official_only=True (ПУБЛІЧНА вітрина) — лише студійні фото: «реальні» (_00N)
+    і «нюанси» (_defN) публіці НІКОЛИ не показуються, тільки адміну."""
     index = _get_index()
     own = list(index.get(_normalize(productnumber), []))
     donor_pnum = _normalize(official_photos_from)
@@ -201,14 +204,18 @@ def list_images(productnumber: str, official_photos_from: str = "", width: int =
         own = [pair for pair in own if pair[1].kind != "official"]
         own += [pair for pair in index.get(donor_pnum, []) if pair[1].kind == "official"]
         own.sort(key=lambda pair: pair[0])
+    if official_only:
+        own = [pair for pair in own if pair[1].kind == "official"]
     if width:
         return [ImageEntry(e.filename, _with_width(e.url, width), e.kind) for _, e in own]
     return [entry for _, entry in own]
 
 
-def main_image_url(productnumber: str, official_photos_from: str = "") -> str | None:
+def main_image_url(productnumber: str, official_photos_from: str = "",
+                   official_only: bool = False) -> str | None:
     """Головне фото для картки каталогу (перше за сортуванням), у ширині картки."""
-    images = list_images(productnumber, official_photos_from, width=CARD_IMAGE_WIDTH)
+    images = list_images(productnumber, official_photos_from, width=CARD_IMAGE_WIDTH,
+                         official_only=official_only)
     return images[0].url if images else None
 
 
