@@ -26,6 +26,7 @@ TABLES = {
     "brands": None, "types": None, "subtypes": None, "styles": None,
     "colors": None, "genders": None, "conditions": None, "statuses": None,
     "color_groups": None, "color_group_members": None,
+    "materials": None, "product_materials": None,
     "catalog_listings": None, "brand_aliases": None,
     "products": None,
     "orders": ["id", "order_status_id", "payment_status_id"],
@@ -42,6 +43,7 @@ INDEXES = [
     'CREATE INDEX IF NOT EXISTS ix_ba_brandid ON brand_aliases(brand_id)',
     'CREATE INDEX IF NOT EXISTS ix_oi_product ON order_items(product_id)',
     'CREATE INDEX IF NOT EXISTS ix_oi_order ON order_items(order_id)',
+    'CREATE INDEX IF NOT EXISTS ix_pm_product ON product_materials(product_id)',
 ]
 
 
