@@ -86,3 +86,25 @@
   --shadow-md:   0 4px 8px rgba(0, 0, 0, 0.45);
   --shadow-lg:   0 -4px 24px rgba(0, 0, 0, 0.55);
 }
+
+/* ---------- Ручний вибір теми (кнопка ☀/🌙) ----------
+   Усередині Telegram його скрипт підставляє --tg-theme-* (кольори теми Telegram),
+   тож var(--tg-theme-…, fallback) вище ігнорує наш перемикач. Коли користувач
+   обрав тему ВРУЧНУ, html отримує data-theme-manual — і палітра стає чистою,
+   без прив'язки до Telegram. Специфічність вища за :root/[data-theme]. */
+html[data-theme-manual] {
+  --primary:     #111111;
+  --on-primary:  #ffffff;
+  --bg:          #f5f5f5;
+  --surface:     #ffffff;
+  --fg:          #333333;
+  --fg-subtle:   #8c8c8c;
+}
+html[data-theme-manual][data-theme='dark'] {
+  --primary:     #ffffff;
+  --on-primary:  #1e1e1e;
+  --bg:          #2d2d2d;
+  --surface:     #1e1e1e;
+  --fg:          #e4e4e4;
+  --fg-subtle:   #9a9a9a;
+}

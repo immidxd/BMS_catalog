@@ -97,7 +97,6 @@ def main():
         lc.copy_expert(f'COPY (SELECT {collist} FROM "{table}") TO STDOUT', buf)
         buf.seek(0)
         cc.copy_expert(f'COPY "{table}" ({collist}) FROM STDIN', buf)
-        cloud.commit()
         print(f"  ✓ {table}: {cc.rowcount} рядків")
 
     # catalog_images — ПОХІДНА таблиця (нема локально): список фото-шляхів з диска,
@@ -114,11 +113,13 @@ def main():
     buf.seek(0)
     cc.copy_expert("COPY catalog_images (relpath, version) FROM STDIN", buf)
     cc.execute('CREATE INDEX IF NOT EXISTS ix_catimg_relpath ON catalog_images(relpath)')
-    cloud.commit()
     print(f"  ✓ catalog_images: {n} фото")
 
     for ix in INDEXES:
         cc.execute(ix)
+    # ОДИН commit на весь зріз: читачі бачать або повністю старий, або повністю
+    # новий стан (жодних «наполовину оновлених» таблиць у мить синхрону о :00).
+    cloud.commit()
     cc.execute("ANALYZE")
     cloud.commit()
 

@@ -52,6 +52,10 @@ export const currentTheme = (): Theme => storedTheme() ?? systemTheme();
 
 const applyTheme = (): void => {
   document.documentElement.dataset.theme = currentTheme();
+  // Ручний вибір теми: позначка вмикає «чисту» палітру без кольорів Telegram
+  // (інакше в Mini App --tg-theme-* переважають і перемикач не має ефекту)
+  if (storedTheme()) document.documentElement.setAttribute('data-theme-manual', '');
+  else document.documentElement.removeAttribute('data-theme-manual');
 };
 
 // Ручне перемикання: фіксує вибір (override) і запамʼятовує
