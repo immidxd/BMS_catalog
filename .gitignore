@@ -19,3 +19,4 @@ frontend/dist/
 
 # Разові бекапи БД
 *_backup_*.sql
+.tools/
