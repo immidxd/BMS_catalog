@@ -27,7 +27,11 @@ TABLES = {
     "colors": None, "genders": None, "conditions": None, "statuses": None,
     "color_groups": None, "color_group_members": None,
     "materials": None, "product_materials": None,
-    "catalog_listings": None, "brand_aliases": None,
+    # catalog_listings НЕМАЄ у цьому списку: публікації синхронізуються
+    # ДВОБІЧНО (мердж newest-wins) — див. _merge_catalog_listings нижче.
+    # Простий push затирав би тумблери 👁, натиснуті в Mini App (вони пишуть
+    # у ХМАРНУ БД через Railway).
+    "brand_aliases": None,
     "products": None,
     "orders": ["id", "order_status_id", "payment_status_id"],
     "order_items": ["order_id", "product_id"],
@@ -45,6 +49,71 @@ INDEXES = [
     'CREATE INDEX IF NOT EXISTS ix_oi_order ON order_items(order_id)',
     'CREATE INDEX IF NOT EXISTS ix_pm_product ON product_materials(product_id)',
 ]
+
+
+def _merge_catalog_listings(lc, cc, local_dsn: dict) -> tuple:
+    """ДВОБІЧНИЙ синк публікацій (catalog_listings): newest-wins по updated_at.
+
+    Тумблери 👁 у Mini App пишуть у ХМАРНУ БД (через Railway), а BMS-картка — у
+    ЛОКАЛЬНУ. Простий push локальної копії затирав би хмарні рішення адміна.
+    Тому: читаємо ОБИДВІ сторони → для кожного номера перемагає новіший
+    updated_at → результат пишемо у хмару (в межах великої транзакції) і
+    ДОПИСУЄМО назад у локальну (окреме rw-з'єднання; catalog_listings — таблиця
+    САМОГО каталогу, BMS-core не чіпається)."""
+    sel = ("SELECT productnumber, is_published, is_featured, published_at, updated_at "
+           "FROM catalog_listings")
+    cc.execute("""CREATE TABLE IF NOT EXISTS catalog_listings (
+        productnumber text PRIMARY KEY,
+        is_published boolean NOT NULL DEFAULT false,
+        is_featured boolean NOT NULL DEFAULT false,
+        published_at timestamptz,
+        updated_at timestamptz NOT NULL DEFAULT now())""")
+    cc.execute(sel)
+    cloud_rows = {r[0]: r for r in cc.fetchall()}
+    lc.execute(sel)
+    local_rows = {r[0]: r for r in lc.fetchall()}
+
+    merged = {}
+    for pn in set(cloud_rows) | set(local_rows):
+        a, b = local_rows.get(pn), cloud_rows.get(pn)
+        merged[pn] = a if (b is None or (a is not None and a[4] >= b[4])) else b
+
+    # Хмара: повна заміна злитим станом (у тій самій транзакції, що й решта).
+    cc.execute("TRUNCATE catalog_listings")
+    # PRIMARY KEY обов'язковий: admin-тумблер 👁 (Railway) робить upsert
+    # ON CONFLICT (productnumber) — без PK він ПАДАЄ. Історично таблицю в хмарі
+    # створив генерований синк без ключів; додаємо PK (після TRUNCATE — безпечно).
+    cc.execute("""DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'catalog_listings'::regclass AND contype = 'p') THEN
+            ALTER TABLE catalog_listings ADD PRIMARY KEY (productnumber);
+        END IF;
+    END $$""")
+    if merged:
+        from psycopg2.extras import execute_values
+        execute_values(cc,
+            "INSERT INTO catalog_listings (productnumber, is_published, is_featured, "
+            "published_at, updated_at) VALUES %s", list(merged.values()))
+
+    # Локальна: дозаписати лише те, де ХМАРА новіша/нова (рішення з телефона).
+    newer = [merged[pn] for pn in merged
+             if pn not in local_rows or merged[pn][4] > local_rows[pn][4]]
+    if newer:
+        lrw = psycopg2.connect(**local_dsn)
+        try:
+            lrc = lrw.cursor()
+            from psycopg2.extras import execute_values
+            execute_values(lrc,
+                "INSERT INTO catalog_listings (productnumber, is_published, is_featured, "
+                "published_at, updated_at) VALUES %s "
+                "ON CONFLICT (productnumber) DO UPDATE SET "
+                "is_published = EXCLUDED.is_published, is_featured = EXCLUDED.is_featured, "
+                "published_at = EXCLUDED.published_at, updated_at = EXCLUDED.updated_at",
+                newer)
+            lrw.commit()
+        finally:
+            lrw.close()
+    return len(merged), len(newer)
 
 
 def _columns(local_cur, table, want):
@@ -72,12 +141,15 @@ def main():
     if not cloud_url:
         sys.exit("✗ Немає CLOUD_DATABASE_URL (рядок підключення до хмарної Postgres).")
 
-    local = psycopg2.connect(
+    local_dsn = dict(
         host=os.getenv("DB_HOST", "localhost"), port=os.getenv("DB_PORT", "5432"),
         dbname=os.getenv("DB_NAME"), user=os.getenv("DB_USER"),
         password=os.getenv("DB_PASSWORD"),
     )
-    local.set_session(readonly=True)  # гарантія: у локальну БД не пишемо
+    local = psycopg2.connect(**local_dsn)
+    # readonly: у BMS-таблиці не пишемо. Єдиний виняток — catalog_listings
+    # (таблиця каталогу): двобічний мердж через ОКРЕМЕ rw-з'єднання.
+    local.set_session(readonly=True)
     cloud = psycopg2.connect(cloud_url)
     lc, cc = local.cursor(), cloud.cursor()
 
@@ -100,6 +172,10 @@ def main():
         buf.seek(0)
         cc.copy_expert(f'COPY "{table}" ({collist}) FROM STDIN', buf)
         print(f"  ✓ {table}: {cc.rowcount} рядків")
+
+    # Публікації — двобічний мердж (newest-wins), НЕ простий push.
+    m_total, m_back = _merge_catalog_listings(lc, cc, local_dsn)
+    print(f"  ✓ catalog_listings: {m_total} рядків (мердж; у локальну повернуто {m_back})")
 
     # catalog_images — ПОХІДНА таблиця (нема локально): список фото-шляхів з диска,
     # щоб хмарний images.py будував індекс без диска (CATALOG_IMAGES_SOURCE=db).
