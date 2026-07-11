@@ -71,6 +71,20 @@ _images_dir = get_images_dir()
 if os.path.isdir(_images_dir):
     app.mount(IMAGES_URL_PREFIX, StaticFiles(directory=_images_dir), name="product-images")
 
+# index.html — НЕ кешувати (щоб деплой/оновлення фронтенду показувались одразу, без
+# «застряглого» старого бандла в Telegram-WebView). Хешовані asset-и (assets/*.js|css)
+# лишаємо кешованими браузером — їхні імена змінюються при кожному білді.
+@app.middleware("http")
+async def _no_cache_index(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.endswith((".html", "/index.html")):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 # Продакшн-збірка фронтенду (npm run build) — віддається цим же сервером
 _frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
 if os.path.isdir(_frontend_dist):
