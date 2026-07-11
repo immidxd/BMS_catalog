@@ -254,6 +254,41 @@ button {
 }
 .card.unlisted .card-image img { opacity: 0.5; }
 
+/* 👁 Перегляди картки — мінімалістичний бейдж у нижньому лівому куті (лише адмін) */
+.views-badge {
+  position: absolute;
+  bottom: var(--space-2);
+  left: var(--space-2);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  backdrop-filter: blur(2px);
+}
+.views-badge svg { opacity: 0.9; }
+
+/* Рядок переглядів на сторінці товару (адмін) */
+.views-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: var(--space-2);
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2, rgba(0, 0, 0, 0.05));
+  color: var(--text-muted, #6b7280);
+  font-size: 12px;
+  font-weight: 600;
+  width: fit-content;
+}
+
 /* ── Обгортка картки + адмін-тумблер публікації (Фаза 2) ─────────────────── */
 .card-wrap { position: relative; display: flex; }
 .card-wrap > .card { flex: 1; min-width: 0; }

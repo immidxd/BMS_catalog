@@ -51,6 +51,21 @@ async def get_config():
 app.include_router(catalog_router)
 app.include_router(admin_router)
 
+
+@app.on_event("startup")
+def _ensure_catalog_tables() -> None:
+    """Гарантуємо додаткові таблиці каталогу (перегляди) — не залежимо від міграцій BMS."""
+    try:
+        from database import SessionLocal
+        from catalog import _ensure_views_table
+        db = SessionLocal()
+        try:
+            _ensure_views_table(db)
+        finally:
+            db.close()
+    except Exception:
+        pass   # каталог працює й без лічильника переглядів
+
 # Статика фото товарів: монтуємо корінь «Товар», URL містять підпапку-категорію
 _images_dir = get_images_dir()
 if os.path.isdir(_images_dir):

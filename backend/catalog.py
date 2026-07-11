@@ -19,6 +19,45 @@ from images import GALLERY_IMAGE_WIDTH, list_images, main_image_url, official_ph
 
 router = APIRouter()
 
+
+# ── Косметика відображення у вітрині (не змінює дані в БД) ────────────────────
+# Матеріали-абревіатури → ЗАВЖДИ ВЕЛИКИМИ латиницею (EVA/PU/TPU…), у т.ч. кириличний
+# набір (ева/пу/пвх). «шкіра» → «натуральна шкіра» (клієнту звучить краще), окрім
+# екошкіри/штучної/шкірзаму/вже-натуральної. Стан «Хороший» → «Хороший / Сток».
+_MAT_ABBR = {"eva": "EVA", "ева": "EVA", "эва": "EVA", "pu": "PU", "пу": "PU",
+             "tpu": "TPU", "тпу": "TPU", "tpr": "TPR", "тпр": "TPR", "pvc": "PVC",
+             "пвх": "PVC", "abs": "ABS", "pp": "PP", "eтпу": "ETPU", "etpu": "ETPU"}
+_ABBR_RE = re.compile(r"\b(eva|ева|эва|pu|пу|tpu|тпу|tpr|тпр|pvc|пвх|abs|pp|etpu|eтпу)\b", re.I)
+
+
+def _display_material(name: str) -> str:
+    s = (name or "").strip()
+    if not s:
+        return s
+    low = s.lower()
+    if re.search(r"\bшкіра\b", low) and not any(
+        k in low for k in ("натуральн", "штучн", "еко", "шкірзам", "шкірозам")
+    ):
+        s = re.sub(r"(?i)\bшкіра\b", "натуральна шкіра", s)
+    return _ABBR_RE.sub(lambda m: _MAT_ABBR.get(m.group(0).lower(), m.group(0).upper()), s)
+
+
+def _display_condition(name: Optional[str]) -> Optional[str]:
+    return "Хороший / Сток" if (name or "").strip().lower() == "хороший" else name
+
+
+def _ensure_views_table(db: Session) -> None:
+    """Лічильник переглядів картки товару (додаткова таблиця, схему products не чіпаємо)."""
+    db.execute(text("""
+        CREATE TABLE IF NOT EXISTS catalog_views (
+            productnumber varchar(80) PRIMARY KEY,
+            views         integer NOT NULL DEFAULT 0,
+            updated_at    timestamptz DEFAULT now()
+        )
+    """))
+    db.commit()
+
+
 # «Продано» = Подарунок(7) АБО (Підтверджено(1) І Оплачено(1)), мінус Повернення(9).
 _SOLD_JOIN = """
     LEFT JOIN (
@@ -364,12 +403,37 @@ async def get_catalog(
             "published": r["published"],   # для адмін-сітки (бачить пул і що ввімкнено)
         })
 
+    # Перегляди на картку (для адмін-бейджа) — один батч-запит по представниках.
+    if items:
+        try:
+            vmap = {
+                vr[0]: vr[1] for vr in db.execute(
+                    text("SELECT productnumber, views FROM catalog_views WHERE productnumber = ANY(:pns)"),
+                    {"pns": [it["productnumber"] for it in items]},
+                ).all()
+            }
+            for it in items:
+                it["views"] = int(vmap.get(it["productnumber"], 0))
+        except Exception:
+            db.rollback()
+
     return {
         "items": items,
         "total": total,
         "page": page,
         "pages": (total + per_page - 1) // per_page,
     }
+
+
+@router.get("/api/catalog/views")
+async def get_catalog_views(db: Session = Depends(get_db)):
+    """Мапа {productnumber: перегляди} — для «живого» оновлення бейджів у адмін-режимі."""
+    try:
+        rows = db.execute(text("SELECT productnumber, views FROM catalog_views WHERE views > 0")).all()
+        return {"views": {r[0]: int(r[1]) for r in rows}}
+    except Exception:
+        db.rollback()
+        return {"views": {}}
 
 
 @router.get("/api/catalog/filters")
@@ -643,7 +707,26 @@ async def get_catalog_product(
     ).mappings().all()
     materials_by_position: Dict[str, List[str]] = {}
     for m in materials:
-        materials_by_position.setdefault(m["position"], []).append(m["materialname"])
+        materials_by_position.setdefault(m["position"], []).append(_display_material(m["materialname"]))
+
+    # Лічильник переглядів: інкрементуємо ЛИШЕ на публічний відкрив картки (не адмін-
+    # перегляд only_published=false). Потім віддаємо поточне значення (для адмін-бейджа).
+    views = 0
+    try:
+        if only_published:
+            db.execute(text("""
+                INSERT INTO catalog_views (productnumber, views, updated_at)
+                VALUES (:pn, 1, now())
+                ON CONFLICT (productnumber)
+                DO UPDATE SET views = catalog_views.views + 1, updated_at = now()
+            """), {"pn": row["productnumber"]})
+            db.commit()
+        views = db.execute(
+            text("SELECT views FROM catalog_views WHERE productnumber = :pn"),
+            {"pn": row["productnumber"]},
+        ).scalar() or 0
+    except Exception:
+        db.rollback()          # таблиці ще нема / гонка — перегляди не критичні
 
     # Публіці (only_published) — ЛИШЕ студійні фото; «реальні»/«нюанси» бачить тільки адмін
     images = list_images(row["productnumber"], row["official_photos_from"] or "",
@@ -699,9 +782,12 @@ async def get_catalog_product(
         size_variants.append(dict(r))
 
     skip = {"official_photos_from", "brandid", "typeid", "colorid", "sig_cond"}
+    out = {k: row[k] for k in row.keys() if k not in skip}
+    out["conditionname"] = _display_condition(out.get("conditionname"))
     return {
-        **{k: row[k] for k in row.keys() if k not in skip},
+        **out,
         "materials": materials_by_position,
         "images": [{"url": img.url, "kind": img.kind} for img in images],
         "size_variants": size_variants,
+        "views": int(views),
     }

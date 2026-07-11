@@ -1,6 +1,6 @@
 // TG Shop — каталог: пошук, фільтри, сітка товарів, сторінка товару
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CatalogItem, CatalogQuery, Facets, FilterOptions, fetchConfig, fetchFacets, fetchFilters, setCatalogPublication } from './api';
+import { CatalogItem, CatalogQuery, Facets, FilterOptions, fetchConfig, fetchFacets, fetchFilters, fetchViews, setCatalogPublication } from './api';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
 import { ProductCard, SkeletonCard } from './components/ProductCard';
 import { ProductPage } from './components/ProductPage';
@@ -42,6 +42,8 @@ export const App = () => {
   // Фасети наперед: щоб лист фільтрів одразу показував коректні (звужені)
   // розміри/стать/колір без стрибка «повна сітка → звужена».
   const [facets, setFacets] = useState<Facets | null>(null);
+  // Перегляди карток для адмін-бейджів; оновлюються «живо» полінгом (лише адмін).
+  const [viewsMap, setViewsMap] = useState<Record<string, number>>({});
 
   const debouncedSearch = useDebounced(search);
   const effSearch = debouncedSearch.trim().length >= 2 ? debouncedSearch.trim() : undefined;
@@ -66,6 +68,17 @@ export const App = () => {
   // фільтрів порожній: немає типів/брендів/розмірів). Публіці — по опублікованих.
   useEffect(() => {
     fetchFilters(isAdmin).then(setFilterOptions).catch(() => {});
+  }, [isAdmin]);
+
+  // «Живі» перегляди в адмін-режимі: полінг мапи {номер: перегляди} кожні 20с
+  // (бейджі оновлюються без рефетчу сітки). Публіці не запитуємо.
+  useEffect(() => {
+    if (!isAdmin) return;
+    let stop = false;
+    const tick = () => fetchViews().then((m) => { if (!stop) setViewsMap(m); }).catch(() => {});
+    tick();
+    const t = setInterval(tick, 20000);
+    return () => { stop = true; clearInterval(t); };
   }, [isAdmin]);
 
   useEffect(() => {
@@ -241,8 +254,10 @@ export const App = () => {
 
       <main className="grid">
         {items.map((item, i) => (
-          <ProductCard key={item.id} item={item} onOpen={handleOpenProduct} priority={i < 4}
-            admin={isAdmin && adminWrites} onTogglePublish={handleTogglePublish} />
+          <ProductCard key={item.id} priority={i < 4}
+            item={viewsMap[item.productnumber] != null ? { ...item, views: viewsMap[item.productnumber] } : item}
+            onOpen={handleOpenProduct}
+            admin={isAdmin} onTogglePublish={adminWrites ? handleTogglePublish : undefined} />
         ))}
         {isLoading && Array.from({ length: 6 }, (_, i) => <SkeletonCard key={`sk-${i}`} />)}
       </main>

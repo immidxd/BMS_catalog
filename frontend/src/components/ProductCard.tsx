@@ -30,6 +30,14 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
       <div className="card-image">
         {item.featured && <span className="featured-badge">Рекомендований</span>}
         {!item.published && <span className="unlisted-badge">не в каталозі</span>}
+        {admin && (
+          <span className="views-badge" title="Переглядів картки покупцями">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" />
+            </svg>
+            {item.views ?? 0}
+          </span>
+        )}
         {item.image
           ? <img src={item.image} alt={item.model ?? item.productnumber}
               loading={priority ? 'eager' : 'lazy'} decoding="async" />

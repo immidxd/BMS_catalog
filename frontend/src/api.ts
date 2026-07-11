@@ -15,6 +15,7 @@ export type CatalogItem = {
   image: string | null;
   featured: boolean;
   published: boolean;   // для адмін-сітки: видно, що ввімкнено в каталог
+  views?: number;       // перегляди картки (адмін-бейдж)
 };
 
 export type CatalogResponse = {
@@ -87,6 +88,7 @@ export type ProductDetail = {
   size_variants: SizeVariant[];
   published: boolean;
   featured: boolean;
+  views?: number;       // перегляди картки (адмін)
 };
 
 export type CatalogQuery = {
@@ -152,6 +154,10 @@ export const fetchFacets = (query: CatalogQuery): Promise<Facets> =>
 // інакше неопублікований → 404 (публіці не доступний).
 export const fetchProduct = (id: number, admin = false): Promise<ProductDetail> =>
   fetchJson(`/api/catalog/${id}${admin ? '?only_published=false&group_offers=false' : ''}`);
+
+// Мапа {productnumber: перегляди} — для «живого» оновлення адмін-бейджів (полінг)
+export const fetchViews = (): Promise<Record<string, number>> =>
+  fetchJson<{ views: Record<string, number> }>(`/api/catalog/views`).then((r) => r.views || {});
 
 export const fetchConfig = (): Promise<{
   seller_username: string; seller_phone: string; seller_instagram: string; seller_viber: string;
