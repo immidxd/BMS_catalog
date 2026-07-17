@@ -233,8 +233,14 @@ def _build_filters(
         conditions.append("COALESCE(p.current_conditionid, p.conditionid) = ANY(:conditionids)")
         params["conditionids"] = conditionids
     if seasons:
-        # season — multi-value рядок "Зима, Осінь"; матчимо кожен сезон окремо
+        # season — multi-value рядок "Зима, Осінь"; матчимо кожен сезон окремо.
         season_parts = [f"p.season ILIKE :season_{i}" for i in range(len(seasons))]
+        # Всесезонний товар (напр. сумки/аксесуари) підходить під БУДЬ-ЯКИЙ обраний
+        # сезон — тож не зникає при фільтрі «Літо/Зима…» (як у профі-магазинах).
+        # Виняток: якщо явно обрано сам «Всесезон» — не дублюємо умову.
+        if not any((s or "").strip().lower() == "всесезон" for s in seasons):
+            season_parts.append("p.season ILIKE :season_all")
+            params["season_all"] = "%Всесезон%"
         conditions.append(f"({' OR '.join(season_parts)})")
         for i, season in enumerate(seasons):
             params[f"season_{i}"] = f"%{season}%"
@@ -674,7 +680,7 @@ async def get_catalog_product(
                    p.measurements_heel_min, p.measurements_heel_max,
                    p.measurements_sole_thickness_min, p.measurements_sole_thickness_max,
                    b.brandname, t.typename, st.subtypename, sty.stylename,
-                   g.gendername, c.colorname, cond.conditionname,
+                   g.gendername, c.colorname, cond.conditionname, tech.technologyname AS technology,
                    GREATEST(COALESCE(p.quantity, 0) - COALESCE(sold.sold_count, 0), 0) AS available
             FROM products p
             LEFT JOIN brands b ON p.brandid = b.id
@@ -683,6 +689,7 @@ async def get_catalog_product(
             LEFT JOIN styles sty ON p.styleid = sty.id
             LEFT JOIN genders g ON p.genderid = g.id
             LEFT JOIN colors c ON p.colorid = c.id
+            LEFT JOIN technologies tech ON tech.id = p.technologyid
             LEFT JOIN conditions cond ON cond.id = COALESCE(p.current_conditionid, p.conditionid)
             LEFT JOIN statuses s ON p.statusid = s.id
             LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber

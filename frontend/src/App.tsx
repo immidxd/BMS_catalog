@@ -166,7 +166,13 @@ export const App = () => {
   const toggleBags = () => {
     if (!bagType) return;
     hapticSelect();
-    setQuery((q) => ({ ...q, typeids: bagsActive ? undefined : [bagType.id] }));
+    // Перемикання на «Сумки» скидає несумісні з сумками фільтри розміру (EU/буквені —
+    // сумки їх не мають), щоб не отримати порожньо. Колір/ціна/сезон лишаються
+    // (сезон сам працює: всесезонні сумки підходять під будь-який сезон). Знявши
+    // «Сумки», користувач може одразу продовжити пошук взуття за розмірами.
+    setQuery((q) => bagsActive
+      ? { ...q, typeids: undefined }
+      : { ...q, typeids: [bagType.id], eu_sizes: undefined, size_letters: undefined });
   };
   const toggleSummer = () => {
     hapticSelect();
@@ -174,6 +180,12 @@ export const App = () => {
   };
 
   const activeCount = countActiveFilters(query);
+
+  // Повне скидання фільтрів (адмін-тумблери «з фото»/«опубліковані» зберігаємо)
+  const resetFilters = () => {
+    haptic('medium');
+    setQuery({ sort: query.sort, has_photo: query.has_photo, only_published: query.only_published });
+  };
 
   return (
     <>
@@ -202,6 +214,15 @@ export const App = () => {
           <ThemeToggle />
         </div>
         <div className="chips-row">
+          {/* Помітна кнопка скидання — завжди ліворуч, поки є активні фільтри.
+              Виразний стиль + лічильник, щоб не губились (зокрема користувачі 40+). */}
+          {activeCount > 0 && (
+            <button type="button" className="chip chip-reset" onClick={resetFilters}>
+              <ResetIcon />
+              Скинути фільтри
+              <span className="reset-count">{activeCount}</span>
+            </button>
+          )}
           {SORTS.map((sort) => (
             <button
               type="button"
@@ -220,15 +241,6 @@ export const App = () => {
           {filterOptions?.seasons.includes('Літо') && (
             <button type="button" className={`chip${summerActive ? ' active' : ''}`} onClick={toggleSummer}>
               Літо
-            </button>
-          )}
-          {activeCount > 0 && (
-            <button
-              type="button"
-              className="chip"
-              onClick={() => { haptic('medium'); setQuery({ sort: query.sort, has_photo: query.has_photo, only_published: query.only_published }); }}
-            >
-              Скинути фільтри <span className="x">✕</span>
             </button>
           )}
         </div>
@@ -288,6 +300,9 @@ export const App = () => {
       {productId !== null && (
         <ProductPage
           productId={productId}
+          siblingIds={items.map((it) => it.id)}
+          onNavigate={(id) => { haptic('light'); setProductId(id); }}
+          onNeedMore={loadMore}
           sellerUsername={sellerUsername}
           sellerPhone={sellerPhone}
           sellerInstagram={sellerInstagram}
@@ -304,6 +319,13 @@ const SearchIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
     <circle cx="11" cy="11" r="7" />
     <path d="M21 21l-4.3-4.3" />
+  </svg>
+);
+
+// Іконка скидання (стрілка-коло) — інтуїтивний знак «повернути як було»
+const ResetIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" />
   </svg>
 );
 

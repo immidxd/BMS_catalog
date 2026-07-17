@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "tg-shop-backend",
+      "runtimeExecutable": "venv/bin/uvicorn",
+      "runtimeArgs": ["main:app", "--app-dir", "backend", "--port", "8001", "--reload"],
+      "port": 8001
+    },
+    {
       "name": "tg-shop",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "frontend", "run", "dev"],

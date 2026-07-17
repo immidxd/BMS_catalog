@@ -71,6 +71,7 @@ export type ProductDetail = {
   conditionname: string | null;
   brandname: string | null;
   typename: string | null;
+  technology: string | null;   // сирий рядок технологій (напр. "Vibram, MEGAGRIP")
   year: number | null;
   width: string | null;
   dimensions: string | null;   // габарити сумки/валізи, напр. "40x20x5"

@@ -1,10 +1,14 @@
 // Повна сторінка товару: галерея (свайп), характеристики, зв'язок з продавцем
 import React, { useEffect, useRef, useState } from 'react';
 import { ProductDetail, fetchProduct, formatPrice, formatSeason } from '../api';
+import { parseTechnologies } from '../techLogos';
 import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
 
 type Props = {
   productId: number;
+  siblingIds?: number[];             // порядок карток у каталозі — для гортання свайпом
+  onNavigate?: (id: number) => void; // відкрити сусідню картку
+  onNeedMore?: () => void;           // підвантажити ще (коли дійшли до кінця списку)
   sellerUsername: string;
   sellerPhone: string;
   sellerInstagram: string;
@@ -40,27 +44,76 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
 const cap = (s: string | null): string | null =>
   s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 
-export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin = false, onBack }: Props) => {
+export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin = false, onBack }: Props) => {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [error, setError] = useState(false);
   const [slide, setSlide] = useState(0);
   const [copied, setCopied] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+
+  // Сусідні картки в поточному порядку каталогу (для гортання свайпом/стрілками)
+  const idx = siblingIds.indexOf(productId);
+  const prevId = idx > 0 ? siblingIds[idx - 1] : null;
+  const nextId = idx >= 0 && idx < siblingIds.length - 1 ? siblingIds[idx + 1] : null;
+  const goSibling = (dir: -1 | 1) => {
+    const target = dir === -1 ? prevId : nextId;
+    if (target != null) onNavigate?.(target);
+    // Наближаємось до кінця завантаженого списку — просимо ще (безкінечне гортання)
+    if (dir === 1 && idx >= siblingIds.length - 2) onNeedMore?.();
+  };
 
   useEffect(() => showBackButton(onBack), [onBack]);
 
-  // Esc закриває картку (зручно на десктопі)
+  // Esc закриває картку; ← / → гортають сусідні картування (зручно на десктопі)
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onBack(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onBack();
+      else if (e.key === 'ArrowLeft' && prevId != null) goSibling(-1);
+      else if (e.key === 'ArrowRight' && nextId != null) goSibling(1);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onBack]);
+  }, [onBack, prevId, nextId]);
+
+  // Свайп між картками: горизонтальний жест ПОЗА галереєю (галерея ловить свій
+  // свайп фото). Розмежовуємо за початковою точкою дотику й домінантою осі X.
+  useEffect(() => {
+    const el = pageRef.current;
+    if (!el) return;
+    let x0 = 0, y0 = 0, inGallery = false, active = false;
+    const onStart = (e: TouchEvent) => {
+      const t = e.touches[0];
+      x0 = t.clientX; y0 = t.clientY; active = true;
+      inGallery = !!(e.target as HTMLElement)?.closest?.('.gallery');
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!active || inGallery) { active = false; return; }
+      active = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - x0, dy = t.clientY - y0;
+      // Впевнено горизонтальний жест (не вертикальний скрол) і достатньої довжини
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+        goSibling(dx < 0 ? 1 : -1);   // свайп вліво → наступна, вправо → попередня
+      }
+    };
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchend', onEnd, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchend', onEnd);
+    };
+  }, [prevId, nextId, idx, siblingIds.length]);
 
   // Клік по затемненому фону (поза карткою) на десктопі — закрити
   const handleBackdrop = (e: React.MouseEvent) => { if (e.target === e.currentTarget) onBack(); };
 
   useEffect(() => {
     let cancelled = false;
+    setError(false);
+    setSlide(0);                                   // нова картка — з першого фото
+    pageRef.current?.scrollTo({ top: 0 });         // і згори
+    trackRef.current?.scrollTo({ left: 0 });
     fetchProduct(productId, admin)
       .then((data) => { if (!cancelled) setProduct(data); })
       .catch(() => { if (!cancelled) setError(true); });
@@ -159,8 +212,12 @@ export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInst
     .filter((position) => product.materials[position]?.length)
     .map((position) => [MATERIAL_LABELS[position], cap(product.materials[position].join(', '))] as const);
 
+  // Технології моделі (GORE-TEX, Vibram…) — важливий аргумент вибору. Парсимо
+  // «брудний» рядок у бейджі; лого підхопиться з /tech-logos/<slug>.svg, якщо є.
+  const techs = parseTechnologies(product.technology);
+
   return (
-    <div className="product-page" onClick={handleBackdrop}>
+    <div className="product-page" ref={pageRef} onClick={handleBackdrop}>
       {!isInTelegram && <button type="button" className="back-fab" onClick={onBack} aria-label="Назад">←</button>}
 
       <div className="product-sheet">
@@ -239,6 +296,21 @@ export const ProductPage = ({ productId, sellerUsername, sellerPhone, sellerInst
           <div className="detail-card">
             <h3>Опис <span className="admin-only-tag">тільки адмін</span></h3>
             <p className="description">{cap(product.description)}</p>
+          </div>
+        )}
+
+        {techs.length > 0 && (
+          <div className="detail-card">
+            <h3>Технології</h3>
+            <div className="tech-row">
+              {techs.map((t) => (
+                <span className="tech-badge" key={t.slug || t.label} title={t.label}>
+                  <img className="tech-logo" src={`/tech-logos/${t.slug}.svg`} alt=""
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                  {t.label}
+                </span>
+              ))}
+            </div>
           </div>
         )}
 
