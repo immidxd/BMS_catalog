@@ -1,6 +1,6 @@
 // Повна сторінка товару: галерея (свайп), характеристики, зв'язок з продавцем
 import React, { useEffect, useRef, useState } from 'react';
-import { ProductDetail, fetchProduct, formatPrice, formatSeason } from '../api';
+import { AdminAuth, ProductDetail, fetchProduct, formatPrice, formatSeason, setCatalogDescription } from '../api';
 import { parseTechnologies } from '../techLogos';
 import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
 
@@ -9,6 +9,9 @@ type Props = {
   siblingIds?: number[];             // порядок карток у каталозі — для гортання свайпом
   onNavigate?: (id: number) => void; // відкрити сусідню картку
   onNeedMore?: () => void;           // підвантажити ще (коли дійшли до кінця списку)
+  isFavorite?: (pn: string) => boolean;
+  onToggleFav?: (pn: string) => Promise<{ favorite: boolean; fav_count?: number }>;
+  adminAuth?: () => AdminAuth | null;   // авторизація адмін-запису (для редагування опису)
   sellerUsername: string;
   sellerPhone: string;
   sellerInstagram: string;
@@ -44,7 +47,7 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
 const cap = (s: string | null): string | null =>
   s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 
-export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin = false, onBack }: Props) => {
+export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, isFavorite, onToggleFav, adminAuth, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin = false, onBack }: Props) => {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [error, setError] = useState(false);
   const [slide, setSlide] = useState(0);
@@ -139,6 +142,17 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
   const handleContact = () => {
     haptic('medium');
     if (product) contactSeller(sellerUsername, product.productnumber);
+  };
+
+  // ♥️ на сторінці товару: перемикаємо обране й оновлюємо лічильник у стані картки
+  const handleFav = () => {
+    if (!product || !onToggleFav) return;
+    onToggleFav(product.productnumber).then((r) => {
+      setProduct((p) => p ? {
+        ...p,
+        fav_count: r.fav_count != null ? r.fav_count : Math.max(0, (p.fav_count ?? 0) + (r.favorite ? 1 : -1)),
+      } : p);
+    });
   };
 
   // Копіювання номера товару в буфер обміну (з fallback для обмежених контекстів)
@@ -265,14 +279,25 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
               <span className="price-old">{formatPrice(product.oldprice)}</span>
             )}
           </div>
-          {admin && (
-            <div className="views-line" title="Переглядів цієї картки покупцями">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" />
-              </svg>
-              {product.views ?? 0} переглядів
-            </div>
-          )}
+          <div className="meta-line">
+            {onToggleFav && (
+              <button type="button"
+                className={`fav-line${isFavorite?.(product.productnumber) ? ' on' : ''}`}
+                onClick={handleFav} aria-pressed={isFavorite?.(product.productnumber)}
+                title={isFavorite?.(product.productnumber) ? 'Прибрати з обраного' : 'Додати в обране'}>
+                <HeartIcon filled={isFavorite?.(product.productnumber)} />
+                {(product.fav_count ?? 0) > 0 ? `${product.fav_count} в обраному` : 'В обране'}
+              </button>
+            )}
+            {admin && (
+              <span className="views-line" title="Переглядів цієї картки покупцями">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" />
+                </svg>
+                {product.views ?? 0} переглядів
+              </span>
+            )}
+          </div>
         </div>
 
         {product.size_variants.length > 0 && (
@@ -291,13 +316,21 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
           </div>
         )}
 
-        {/* Опис — службова інформація: показуємо ЛИШЕ адміну, публіці ніколи */}
-        {admin && product.description && (
+        {/* Опис: адмін редагує текст і керує публічністю; публіка бачить опис лише
+            якщо адмін зробив його публічним (бекенд віддає description тільки тоді). */}
+        {admin && adminAuth ? (
+          <AdminDescription product={product} auth={adminAuth}
+            onSaved={(patch) => setProduct((p) => p ? {
+              ...p,
+              ...(patch.description !== undefined ? { description: patch.description } : {}),
+              ...(patch.is_public !== undefined ? { description_public: patch.is_public } : {}),
+            } : p)} />
+        ) : product.description ? (
           <div className="detail-card">
-            <h3>Опис <span className="admin-only-tag">тільки адмін</span></h3>
+            <h3>Опис</h3>
             <p className="description">{cap(product.description)}</p>
           </div>
-        )}
+        ) : null}
 
         {techs.length > 0 && (
           <div className="detail-card">
@@ -369,6 +402,72 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
       )}
       </div>
       </div>
+    </div>
+  );
+};
+
+const HeartIcon = ({ filled }: { filled?: boolean }) => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'}
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z" />
+  </svg>
+);
+
+// Адмін-редактор опису: текст (пишеться в products.description) + перемикач публічності.
+// Зміни — ті самі поля в БД, що бачить/редагує BMS.
+const AdminDescription = ({ product, auth, onSaved }: {
+  product: ProductDetail;
+  auth: () => AdminAuth | null;
+  onSaved: (patch: { description?: string | null; is_public?: boolean }) => void;
+}) => {
+  const [text, setText] = useState(product.description ?? '');
+  const [isPublic, setIsPublic] = useState(!!product.description_public);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setText(product.description ?? ''); setIsPublic(!!product.description_public); },
+    [product.id, product.description, product.description_public]);
+
+  const dirty = text.trim() !== (product.description ?? '').trim();
+
+  const save = async (patch: { description?: string; is_public?: boolean }) => {
+    const a = auth();
+    if (!a) return;
+    setSaving(true);
+    try {
+      await setCatalogDescription({ product_id: product.id, productnumber: product.productnumber, ...patch }, a);
+      onSaved({
+        ...(patch.description !== undefined ? { description: patch.description.trim() || null } : {}),
+        ...(patch.is_public !== undefined ? { is_public: patch.is_public } : {}),
+      });
+      haptic('light');
+    } catch {
+      haptic('medium');
+      alert('Не вдалося зберегти опис (перевірте доступ/токен).');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const togglePublic = () => { const next = !isPublic; setIsPublic(next); save({ is_public: next }); };
+
+  return (
+    <div className="detail-card">
+      <h3>
+        Опис <span className="admin-only-tag">адмін</span>
+        <button type="button" className={`desc-public-toggle${isPublic ? ' on' : ''}`}
+          onClick={togglePublic} disabled={saving} aria-pressed={isPublic}
+          title={isPublic ? 'Опис видно всім' : 'Опис видно лише вам'}>
+          {isPublic ? '● Публічний' : 'Зробити публічним'}
+        </button>
+      </h3>
+      <textarea className="desc-edit" value={text} rows={3}
+        placeholder="Опис товару (видно лише вам, поки не публічний)…"
+        onChange={(e) => setText(e.target.value)} />
+      {dirty && (
+        <button type="button" className="desc-save" disabled={saving}
+          onClick={() => save({ description: text })}>
+          {saving ? 'Збереження…' : 'Зберегти опис'}
+        </button>
+      )}
     </div>
   );
 };

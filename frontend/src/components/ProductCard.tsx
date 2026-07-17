@@ -10,6 +10,8 @@ type Props = {
   priority?: boolean;
   admin?: boolean;
   onTogglePublish?: (item: CatalogItem) => void;
+  isFav?: boolean;                          // чи товар у «Обраному» користувача
+  onToggleFav?: (item: CatalogItem) => void;
 };
 
 // Розміри для картки: пріоритет EU → літерні → см
@@ -20,8 +22,9 @@ const sizeLabel = (item: CatalogItem): string | null => {
   return null;
 };
 
-export const ProductCard = ({ item, onOpen, priority = false, admin = false, onTogglePublish }: Props) => {
+export const ProductCard = ({ item, onOpen, priority = false, admin = false, onTogglePublish, isFav = false, onToggleFav }: Props) => {
   const size = sizeLabel(item);
+  const favCount = item.fav_count ?? 0;
   // «unlisted» (не в каталозі) бачить лише адмін — публіці неопубліковані не доходять
   return (
     <div className="card-wrap">
@@ -30,6 +33,17 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
       <div className="card-image">
         {item.featured && <span className="featured-badge">Рекомендований</span>}
         {!item.published && <span className="unlisted-badge">не в каталозі</span>}
+        {/* «Обране» ♥️ — у кутку фото: тап додає/прибирає, поряд публічний лічильник */}
+        {onToggleFav && (
+          <button type="button"
+            className={`fav-btn${isFav ? ' on' : ''}`}
+            onClick={(e) => { e.stopPropagation(); onToggleFav(item); }}
+            aria-pressed={isFav}
+            aria-label={isFav ? 'Прибрати з обраного' : 'Додати в обране'}>
+            <HeartIcon filled={isFav} />
+            {favCount > 0 && <span className="fav-count">{favCount}</span>}
+          </button>
+        )}
         {admin && (
           <span className="views-badge" title="Переглядів картки покупцями">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -68,6 +82,13 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
     </div>
   );
 };
+
+const HeartIcon = ({ filled }: { filled?: boolean }) => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'}
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z" />
+  </svg>
+);
 
 const EyeIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

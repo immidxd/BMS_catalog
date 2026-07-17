@@ -37,10 +37,10 @@ def admin_writes_enabled() -> bool:
     return bool(_admin_token() or (_bot_token() and _admin_ids()))
 
 
-def verify_init_data(init_data: str, max_age_sec: int = 86400) -> Optional[int]:
-    """Перевірка Telegram WebApp initData за офіційним алгоритмом (HMAC-SHA256).
-    Повертає telegram user.id, якщо підпис валідний, не протух і user ∈ ADMIN_TG_IDS;
-    інакше None."""
+def telegram_user_from_init_data(init_data: str, max_age_sec: int = 86400) -> Optional[int]:
+    """Перевірка Telegram WebApp initData (HMAC-SHA256) для БУДЬ-ЯКОГО користувача.
+    Повертає telegram user.id, якщо підпис валідний і не протух; інакше None.
+    (Використовується для «Обраного» — не потребує адмін-прав.)"""
     token = _bot_token()
     if not token or not init_data:
         return None
@@ -64,12 +64,17 @@ def verify_init_data(init_data: str, max_age_sec: int = 86400) -> Optional[int]:
             return None
     except ValueError:
         return None
-    # user.id має бути у списку адмінів
     try:
-        uid = int(json.loads(pairs.get("user", "{}")).get("id"))
+        return int(json.loads(pairs.get("user", "{}")).get("id"))
     except (ValueError, TypeError):
         return None
-    return uid if uid in _admin_ids() else None
+
+
+def verify_init_data(init_data: str, max_age_sec: int = 86400) -> Optional[int]:
+    """Як telegram_user_from_init_data, але повертає id ЛИШЕ якщо user ∈ ADMIN_TG_IDS
+    (для адмін-записів)."""
+    uid = telegram_user_from_init_data(init_data, max_age_sec)
+    return uid if (uid is not None and uid in _admin_ids()) else None
 
 
 def authorize_admin(authorization: Optional[str], init_data: Optional[str]) -> bool:

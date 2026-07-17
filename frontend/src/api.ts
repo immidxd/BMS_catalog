@@ -16,6 +16,7 @@ export type CatalogItem = {
   featured: boolean;
   published: boolean;   // для адмін-сітки: видно, що ввімкнено в каталог
   views?: number;       // перегляди картки (адмін-бейдж)
+  fav_count?: number;   // скільки людей додали в «Обране» (♥️, публічно)
 };
 
 export type CatalogResponse = {
@@ -89,7 +90,9 @@ export type ProductDetail = {
   size_variants: SizeVariant[];
   published: boolean;
   featured: boolean;
+  description_public?: boolean;   // чи опис публічний (адмін керує)
   views?: number;       // перегляди картки (адмін)
+  fav_count?: number;   // скільки людей у «Обраному» (♥️)
 };
 
 export type CatalogQuery = {
@@ -106,6 +109,7 @@ export type CatalogQuery = {
   eu_sizes?: number[];
   min_price?: number;
   max_price?: number;
+  favnums?: string[];         // «Обране»: показати лише ці номери товарів
   has_photo?: boolean;
   only_published?: boolean;   // публіка=true; адмін може вимкнути, щоб бачити весь пул
   // публіка=true (зливаємо дублі-завози в одну картку); адмін=false (кожен номер окремо)
@@ -178,6 +182,37 @@ export const setCatalogPublication = async (
   else if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
   const res = await fetch('/api/admin/catalog', {
     method: 'PATCH', headers, body: JSON.stringify({ productnumber, ...payload }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+// ── «Обране» (Фаза B) — серверне, авторизоване Telegram initData ──────────────
+// Поза Telegram initData немає → фронт тримає обране локально (localStorage).
+export const fetchFavorites = (initData: string): Promise<string[]> =>
+  fetch('/api/favorites', { headers: { 'X-Telegram-Init-Data': initData } })
+    .then((r) => (r.ok ? r.json() : { productnumbers: [] }))
+    .then((d) => d.productnumbers || []);
+
+export const toggleFavoriteServer = (
+  productnumber: string, favorite: boolean, initData: string,
+): Promise<{ fav_count: number }> =>
+  fetch('/api/favorites', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+    body: JSON.stringify({ productnumber, favorite }),
+  }).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); });
+
+// ── Адмін: редагування/публікація опису (Фаза B) ─────────────────────────────
+export const setCatalogDescription = async (
+  payload: { product_id: number; productnumber: string; description?: string; is_public?: boolean },
+  auth: AdminAuth,
+): Promise<{ description: string | null; is_description_public: boolean | null }> => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (auth.initData) headers['X-Telegram-Init-Data'] = auth.initData;
+  else if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+  const res = await fetch('/api/admin/catalog/description', {
+    method: 'PATCH', headers, body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();

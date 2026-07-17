@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from admin import router as admin_router
 from auth import admin_writes_enabled
 from catalog import router as catalog_router
+from favorites import router as favorites_router
 from images import URL_PREFIX as IMAGES_URL_PREFIX, get_images_dir
 
 # Документація API (Swagger/ReDoc/openapi.json) — за замовчуванням ВИМКНЕНА:
@@ -26,7 +27,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "PATCH", "OPTIONS"],   # PATCH — лише захищений адмін-запис публікації
+    # PATCH — захищений адмін-запис (публікація/опис); POST — «Обране» користувача
+    allow_methods=["GET", "PATCH", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -50,21 +52,28 @@ async def get_config():
 
 app.include_router(catalog_router)
 app.include_router(admin_router)
+app.include_router(favorites_router)
 
 
 @app.on_event("startup")
 def _ensure_catalog_tables() -> None:
-    """Гарантуємо додаткові таблиці каталогу (перегляди) — не залежимо від міграцій BMS."""
+    """Гарантуємо додаткові об'єкти каталогу (перегляди, обране, публічність опису)
+    — адитивно, не залежимо від міграцій BMS. Кожен крок незалежний: збій одного
+    (напр. catalog_listings ще нема) не блокує решту."""
     try:
         from database import SessionLocal
-        from catalog import _ensure_views_table
+        from catalog import (_ensure_description_public_column,
+                             _ensure_favorites_table, _ensure_views_table)
+    except Exception:
+        return
+    for ensure in (_ensure_views_table, _ensure_favorites_table, _ensure_description_public_column):
         db = SessionLocal()
         try:
-            _ensure_views_table(db)
+            ensure(db)
+        except Exception:
+            db.rollback()   # відсутня таблиця/гонка — некритично, каталог працює далі
         finally:
             db.close()
-    except Exception:
-        pass   # каталог працює й без лічильника переглядів
 
 # Статика фото товарів: монтуємо корінь «Товар», URL містять підпапку-категорію
 _images_dir = get_images_dir()

@@ -58,6 +58,33 @@ def _ensure_views_table(db: Session) -> None:
     db.commit()
 
 
+def _ensure_favorites_table(db: Session) -> None:
+    """«Обране» користувача — додаткова таблиця (ключ: telegram_user_id + номер).
+    Схему BMS не чіпаємо; самостворюється на старті, як catalog_views."""
+    db.execute(text("""
+        CREATE TABLE IF NOT EXISTS catalog_favorites (
+            telegram_user_id bigint       NOT NULL,
+            productnumber    varchar(80)  NOT NULL,
+            created_at       timestamptz  DEFAULT now(),
+            PRIMARY KEY (telegram_user_id, productnumber)
+        )
+    """))
+    db.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_catalog_favorites_pn ON catalog_favorites (productnumber)"
+    ))
+    db.commit()
+
+
+def _ensure_description_public_column(db: Session) -> None:
+    """Прапорець публічності опису — адитивна колонка в catalog_listings
+    (за замовч. FALSE: опис лишається приватним, поки адмін не відкриє явно)."""
+    db.execute(text(
+        "ALTER TABLE catalog_listings ADD COLUMN IF NOT EXISTS "
+        "is_description_public boolean NOT NULL DEFAULT FALSE"
+    ))
+    db.commit()
+
+
 # «Продано» = Подарунок(7) АБО (Підтверджено(1) І Оплачено(1)), мінус Повернення(9).
 _SOLD_JOIN = """
     LEFT JOIN (
@@ -158,10 +185,22 @@ def _build_filters(
     max_cm: Optional[float],
     has_photo: Optional[bool],
     only_published: bool = True,
+    favnums: Optional[List[str]] = None,
 ) -> tuple[str, Dict[str, Any]]:
     """Збирає додаткові WHERE-умови та параметри запиту."""
     conditions: List[str] = []
     params: Dict[str, Any] = {}
+
+    # «Обране»: показуємо лише товари з набору номерів користувача. Порожній/невалідний
+    # набір → свідомо нічого не показуємо (фронт покаже «ви ще не маєте обраного»).
+    # Санітизуємо: без нуль-байтів (Postgres відкидає їх у text) і порожніх рядків.
+    if favnums is not None:
+        clean = [x for x in favnums if x and "\x00" not in x]
+        if clean:
+            conditions.append("p.productnumber = ANY(:favnums)")
+            params["favnums"] = clean
+        else:
+            conditions.append("FALSE")   # обране-режим із порожнім набором → 0 товарів
 
     # Публічний каталог показує лише схвалені до публікації товари (catalog_listings).
     # Адмін передає only_published=false, щоб бачити весь наявний пул для модерації.
@@ -313,6 +352,8 @@ async def get_catalog(
     has_photo: bool = Query(True),
     # Публіка бачить лише опубліковані; адмін передає only_published=false для модерації.
     only_published: bool = Query(True),
+    # «Обране»: набір номерів користувача (фронт передає свій список). None — без фільтра.
+    favnums: Optional[List[str]] = Query(None),
     # Публічна вітрина (True): різні номери ідентичного товару зливаються в одну
     # картку. Адмін (False): кожен номер окремо — для поштучного керування.
     group_offers: bool = Query(True),
@@ -329,7 +370,7 @@ async def get_catalog(
     where_sql, params = _build_filters(
         search, typeids, subtypeids, brandids, genderids, color_group_ids,
         conditionids, seasons, eu_sizes, size_letters,
-        min_price, max_price, min_cm, max_cm, has_photo, only_published,
+        min_price, max_price, min_cm, max_cm, has_photo, only_published, favnums,
     )
 
     base_sql = f"{_FULL_JOINS} WHERE {_AVAILABLE_WHERE} {where_sql}"
@@ -420,6 +461,21 @@ async def get_catalog(
             }
             for it in items:
                 it["views"] = int(vmap.get(it["productnumber"], 0))
+        except Exception:
+            db.rollback()
+
+    # Лічильник «Обране» (♥️) на картку — публічний, видно всім скільки людей зберегли.
+    if items:
+        try:
+            fmap = {
+                fr[0]: fr[1] for fr in db.execute(
+                    text("SELECT productnumber, COUNT(*) FROM catalog_favorites "
+                         "WHERE productnumber = ANY(:pns) GROUP BY productnumber"),
+                    {"pns": [it["productnumber"] for it in items]},
+                ).all()
+            }
+            for it in items:
+                it["fav_count"] = int(fmap.get(it["productnumber"], 0))
         except Exception:
             db.rollback()
 
@@ -671,6 +727,7 @@ async def get_catalog_product(
             SELECT p.id, p.productnumber, p.official_photos_from, p.model, p.description,
                    COALESCE(cl.is_published, FALSE) AS published,
                    COALESCE(cl.is_featured, FALSE) AS featured,
+                   COALESCE(cl.is_description_public, FALSE) AS description_public,
                    p.brandid, p.typeid, p.colorid,
                    COALESCE(p.current_conditionid, p.conditionid) AS sig_cond,
                    p.price, p.oldprice, p.sizeeu, p.sizeua, p.measurementscm,
@@ -791,10 +848,26 @@ async def get_catalog_product(
     skip = {"official_photos_from", "brandid", "typeid", "colorid", "sig_cond"}
     out = {k: row[k] for k in row.keys() if k not in skip}
     out["conditionname"] = _display_condition(out.get("conditionname"))
+    # Опис публіці — ЛИШЕ якщо адмін явно зробив його публічним. Адмін (only_published
+    # false) бачить опис завжди (для перегляду/редагування).
+    if only_published and not row["description_public"]:
+        out["description"] = None
+
+    # Лічильник «Обране» (♥️) — публічний
+    fav_count = 0
+    try:
+        fav_count = db.execute(
+            text("SELECT COUNT(*) FROM catalog_favorites WHERE productnumber = :pn"),
+            {"pn": row["productnumber"]},
+        ).scalar() or 0
+    except Exception:
+        db.rollback()
+
     return {
         **out,
         "materials": materials_by_position,
         "images": [{"url": img.url, "kind": img.kind} for img in images],
         "size_variants": size_variants,
         "views": int(views),
+        "fav_count": int(fav_count),
     }

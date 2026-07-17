@@ -300,6 +300,96 @@ button {
 }
 .views-badge svg { opacity: 0.9; }
 
+/* ♥️ «Обране» на картці — нижній правий кут фото (вільний), тап додає/прибирає.
+   Залите червоне серце = у обраному; поряд публічний лічильник скільки людей зберегли. */
+.fav-btn {
+  position: absolute;
+  bottom: var(--space-2);
+  right: var(--space-2);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 7px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+  transition: transform var(--dur-fast) var(--ease);
+}
+.fav-btn:active { transform: scale(0.86); }
+.fav-btn.on { color: var(--danger); }
+.fav-btn .fav-count { color: #fff; }
+
+/* Рядок «Обране» на сторінці товару (для всіх) — біля переглядів */
+.meta-line { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-2); }
+.meta-line .views-line { margin-top: 0; }
+.fav-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-alt);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.fav-line:active { transform: scale(0.96); }
+.fav-line.on { color: var(--danger); }
+
+/* Чіп «Обране» у ряду швидких чіпів */
+.chip-fav svg { flex: none; }
+
+/* Адмін-редактор опису */
+.desc-public-toggle {
+  margin-left: 8px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--fg-subtle);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.desc-public-toggle.on { background: var(--success); border-color: var(--success); color: #fff; }
+.desc-edit {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-alt);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-base);
+}
+.desc-edit:focus { outline: none; border-color: var(--fg-muted); }
+.desc-save {
+  margin-top: 8px;
+  padding: 6px 16px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.desc-save:disabled { opacity: 0.6; }
+
 /* Рядок переглядів на сторінці товару (адмін) */
 .views-line {
   display: inline-flex;
