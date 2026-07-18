@@ -27,6 +27,7 @@ TABLES = {
     "colors": None, "genders": None, "conditions": None, "statuses": None,
     "color_groups": None, "color_group_members": None,
     "materials": None, "product_materials": None,
+    "technologies": None,   # для блоку «Технології» в картці (join у деталі каталогу)
     # catalog_listings НЕМАЄ у цьому списку: публікації синхронізуються
     # ДВОБІЧНО (мердж newest-wins) — див. _merge_catalog_listings нижче.
     # Простий push затирав би тумблери 👁, натиснуті в Mini App (вони пишуть

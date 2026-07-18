@@ -759,7 +759,7 @@ async def get_catalog_product(
                    p.measurements_heel_min, p.measurements_heel_max,
                    p.measurements_sole_thickness_min, p.measurements_sole_thickness_max,
                    b.brandname, t.typename, st.subtypename, sty.stylename,
-                   g.gendername, c.colorname, cond.conditionname, tech.technologyname AS technology,
+                   g.gendername, c.colorname, cond.conditionname,
                    GREATEST(COALESCE(p.quantity, 0) - COALESCE(sold.sold_count, 0), 0) AS available
             FROM products p
             LEFT JOIN brands b ON p.brandid = b.id
@@ -768,7 +768,6 @@ async def get_catalog_product(
             LEFT JOIN styles sty ON p.styleid = sty.id
             LEFT JOIN genders g ON p.genderid = g.id
             LEFT JOIN colors c ON p.colorid = c.id
-            LEFT JOIN technologies tech ON tech.id = p.technologyid
             LEFT JOIN conditions cond ON cond.id = COALESCE(p.current_conditionid, p.conditionid)
             LEFT JOIN statuses s ON p.statusid = s.id
             LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
@@ -794,6 +793,18 @@ async def get_catalog_product(
     materials_by_position: Dict[str, List[str]] = {}
     for m in materials:
         materials_by_position.setdefault(m["position"], []).append(_display_material(m["materialname"]))
+
+    # Технології — ОКРЕМИЙ guarded-запит (не в основному JOIN!), щоб відсутність
+    # таблиці technologies у якійсь БД (напр. хмара до синку) НЕ валила всю картку.
+    technology = None
+    try:
+        technology = db.execute(
+            text("SELECT t.technologyname FROM products p "
+                 "LEFT JOIN technologies t ON t.id = p.technologyid WHERE p.id = :id"),
+            {"id": product_id},
+        ).scalar()
+    except Exception:
+        db.rollback()          # таблиці ще нема (не синхронізовано) — технології не критичні
 
     # Лічильник переглядів: інкрементуємо ЛИШЕ на публічний відкрив картки (не адмін-
     # перегляд only_published=false). Потім віддаємо поточне значення (для адмін-бейджа).
@@ -870,6 +881,7 @@ async def get_catalog_product(
     skip = {"official_photos_from", "brandid", "typeid", "colorid", "sig_cond"}
     out = {k: row[k] for k in row.keys() if k not in skip}
     out["conditionname"] = _display_condition(out.get("conditionname"))
+    out["technology"] = technology
     # Опис публіці — ЛИШЕ якщо адмін явно зробив його публічним. Адмін (only_published
     # false) бачить опис завжди (для перегляду/редагування).
     if only_published and not row["description_public"]:
