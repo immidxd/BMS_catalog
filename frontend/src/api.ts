@@ -199,12 +199,14 @@ export const fetchFavorites = (initData: string): Promise<string[]> =>
     .then((d) => d.productnumbers || []);
 
 export const toggleFavoriteServer = (
-  productnumber: string, favorite: boolean, initData: string,
+  productnumber: string, favorite: boolean, initData: string, userId?: number | null,
 ): Promise<{ fav_count: number }> =>
   fetch('/api/favorites', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
-    body: JSON.stringify({ productnumber, favorite }),
+    // user_id — непідписаний фолбек: дозволяє рахувати ♥️ навіть коли initData не
+    // верифікується сервером (напр. Mini App від іншого бота).
+    body: JSON.stringify({ productnumber, favorite, user_id: userId ?? undefined }),
   }).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); });
 
 // ── Адмін: редагування/публікація опису (Фаза B) ─────────────────────────────

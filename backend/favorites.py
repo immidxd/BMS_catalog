@@ -19,10 +19,24 @@ router = APIRouter()
 
 
 def _require_user(init_data: Optional[str]) -> int:
+    """Суворо: лише ПІДПИСАНИЙ Telegram-користувач (для читання приватного списку)."""
     uid = telegram_user_from_init_data(init_data or "")
     if uid is None:
         raise HTTPException(status_code=401, detail="Потрібен Telegram")
     return uid
+
+
+def _count_user(init_data: Optional[str], user_id: Optional[int]) -> int:
+    """Для ПУБЛІЧНОГО лічильника ♥️: підписаний initData (пріоритет) АБО непідписаний
+    telegram user.id (фолбек, коли initData не верифікується — напр. Mini App від
+    іншого бота). Обране не є приватними даними, тож для лічильника фолбек прийнятний.
+    Персональний список у клієнта тримається в Telegram CloudStorage, не тут."""
+    uid = telegram_user_from_init_data(init_data or "")
+    if uid is not None:
+        return uid
+    if isinstance(user_id, int) and user_id > 0:
+        return user_id
+    raise HTTPException(status_code=401, detail="Немає ідентифікатора користувача")
 
 
 @router.get("/api/favorites")
@@ -47,11 +61,12 @@ async def list_favorites(
 async def toggle_favorite(
     productnumber: str = Body(..., embed=True),
     favorite: bool = Body(..., embed=True),
+    user_id: Optional[int] = Body(None, embed=True),   # непідписаний фолбек для лічильника
     x_telegram_init_data: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Додати/прибрати товар з «Обраного». Повертає новий публічний лічильник ♥️."""
-    uid = _require_user(x_telegram_init_data)
+    uid = _count_user(x_telegram_init_data, user_id)
     pnum = (productnumber or "").strip()
     if not pnum:
         raise HTTPException(status_code=400, detail="Порожній номер")

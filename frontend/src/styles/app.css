@@ -176,9 +176,9 @@ button {
 /* Помітна кнопка «Скинути фільтри»: заповнена (як головна дія серед чіпів),
    з іконкою та лічильником — щоб одразу впадала в око й читалась без здогадок. */
 .chip-reset {
-  background: var(--primary);
-  border-color: var(--primary);
-  color: var(--on-primary);
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
   font-weight: 600;
   gap: 5px;
   padding-left: 10px;
@@ -192,8 +192,8 @@ button {
   height: 17px;
   padding: 0 4px;
   border-radius: var(--radius-full);
-  background: var(--on-primary);
-  color: var(--primary);
+  background: #fff;
+  color: var(--danger);
   font-size: 11px;
   font-weight: 700;
   line-height: 1;

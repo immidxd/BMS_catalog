@@ -54,6 +54,7 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
   const [copied, setCopied] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
+  const galleryImgCountRef = useRef(0);   // к-сть фото поточної картки (для логіки свайпу)
 
   // Сусідні картки в поточному порядку каталогу (для гортання свайпом/стрілками)
   const idx = siblingIds.indexOf(productId);
@@ -88,7 +89,9 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
     const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
       x0 = t.clientX; y0 = t.clientY; active = true;
-      inGallery = !!(e.target as HTMLElement)?.closest?.('.gallery');
+      // Галерея перехоплює свайп ЛИШЕ коли є що гортати (≥2 фото). За одного фото
+      // свайп по фото теж гортає ТОВАРИ (інакше на фото «нічого не відбувається»).
+      inGallery = !!(e.target as HTMLElement)?.closest?.('.gallery') && galleryImgCountRef.current > 1;
     };
     const onEnd = (e: TouchEvent) => {
       if (!active || inGallery) { active = false; return; }
@@ -229,6 +232,8 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
   // Технології моделі (GORE-TEX, Vibram…) — важливий аргумент вибору. Парсимо
   // «брудний» рядок у бейджі; лого підхопиться з /tech-logos/<slug>.svg, якщо є.
   const techs = parseTechnologies(product.technology);
+
+  galleryImgCountRef.current = product.images.length;   // для логіки свайпу (див. вище)
 
   // Знижка: акційна ціна лише для вітрини (products.price не чіпаємо)
   const onSale = !!product.on_sale && product.sale_price != null;

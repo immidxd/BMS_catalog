@@ -8,7 +8,7 @@
 //    (потребує коректного initData/бота; на персональне збереження вже не впливає).
 import { useCallback, useEffect, useState } from 'react';
 import { toggleFavoriteServer } from './api';
-import { cloudGet, cloudSet, cloudStorageAvailable, initDataRaw } from './telegram';
+import { cloudGet, cloudSet, cloudStorageAvailable, initDataRaw, telegramUserId } from './telegram';
 
 const CS_KEY = 'favorites';            // ключ у Telegram CloudStorage
 const LS_KEY = 'tg-shop-favorites';    // локальний бекап
@@ -56,10 +56,11 @@ export const useFavorites = () => {
     setFavSet(s);
     saveLocal(list);                          // локальний бекап
     void cloudSet(CS_KEY, JSON.stringify(list));   // per-user хмара Telegram (синхрон пристроїв)
-    // Сервер — лише для публічного лічильника ♥️ (best-effort; не критично для персонального обраного)
+    // Сервер — лише для ПУБЛІЧНОГО лічильника ♥️ (best-effort). Кличемо, якщо є або
+    // підписаний initData, або хоч непідписаний telegram user.id (фолбек для лічильника).
     const init = initDataRaw();
-    if (init) {
-      return toggleFavoriteServer(pn, next, init)
+    if (init || telegramUserId != null) {
+      return toggleFavoriteServer(pn, next, init, telegramUserId)
         .then((r) => ({ favorite: next, fav_count: r.fav_count }))
         .catch(() => ({ favorite: next }));
     }
