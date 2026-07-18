@@ -134,6 +134,14 @@ export const cloudSet = (key: string, value: string): Promise<void> =>
     try { tg.CloudStorage.setItem(key, value, () => resolve()); } catch { resolve(); }
   });
 
+// Адмін-токен для запису з браузера (поза Telegram) — зберігається локально.
+// Спільний ключ: App.tsx (запити) і ProductPage.tsx (опис/знижка) чистять його
+// однаково при 401 (невалідний токен), щоб наступний адмін-тап одразу перепитав новий.
+export const ADMIN_TOKEN_KEY = 'tg-shop-admin-token';
+export const clearAdminToken = (): void => {
+  if (!isInTelegram) localStorage.removeItem(ADMIN_TOKEN_KEY);
+};
+
 export const contactPhone = (phone: string): void => openExternal(`tel:${phone.replace(/\s/g, '')}`);
 export const contactInstagram = (handle: string): void => openExternal(`https://instagram.com/${handle}`);
 export const contactViber = (phone: string): void => openExternal(`viber://chat?number=${encodeURIComponent(phone.replace(/\s/g, ''))}`);

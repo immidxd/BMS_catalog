@@ -46,7 +46,7 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
         {/* Публіці — бейдж «Рекомендований»; адміну — ручка перетягування (порядок) */}
         {showFeatBadge && !(admin && onFeatDragStart) && <span className="featured-badge">Рекомендований</span>}
         {showFeatBadge && admin && onFeatDragStart && (
-          <span className="feat-grip" title="Перетягніть, щоб змінити порядок рекомендованих"
+          <span className="feat-grip" title="Перетягніть — порядок; тап — прибрати з рекомендованих"
             onPointerDown={(e) => {
               e.stopPropagation();
               (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -99,14 +99,14 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
           {item.published ? <EyeIcon /> : <EyeOffIcon />}
         </button>
       )}
-      {/* «Рекомендований» — тумблер прямо в каталозі (лише опублікований товар) */}
-      {admin && onToggleFeatured && item.published && (
+      {/* Додати в «Рекомендовані» — маленька зірка лише на НЕ-рекомендованих картках.
+          На рекомендованих натомість грип (перетягнути — порядок; тап — прибрати). */}
+      {admin && onToggleFeatured && item.published && !item.featured && (
         <button type="button"
-          className={`feat-fab${item.featured ? ' on' : ''}`}
+          className="feat-fab"
           onClick={(e) => { e.stopPropagation(); onToggleFeatured(item); }}
-          aria-pressed={item.featured}
-          title={item.featured ? 'Прибрати «Рекомендований»' : 'Позначити «Рекомендований»'}>
-          <StarIcon filled={item.featured} />
+          title="Позначити «Рекомендований»">
+          <StarIcon />
         </button>
       )}
     </div>

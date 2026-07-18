@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AdminAuth, ProductDetail, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
 import { parseTechnologies } from '../techLogos';
-import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
+import { clearAdminToken, contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
 
 type Props = {
   productId: number;
@@ -456,8 +456,9 @@ const AdminDescription = ({ product, auth, onSaved }: {
       });
       haptic('light');
     } catch {
+      clearAdminToken();
       haptic('medium');
-      alert('Не вдалося зберегти опис (перевірте доступ/токен).');
+      alert('Не вдалося зберегти опис — перевірте адмін-токен (спробуйте ще раз).');
     } finally {
       setSaving(false);
     }
@@ -516,8 +517,9 @@ const AdminDiscount = ({ product, auth, onSaved }: {
       onSaved(r);
       haptic('light');
     } catch {
+      clearAdminToken();
       haptic('medium');
-      alert('Не вдалося зберегти знижку (перевірте доступ/токен).');
+      alert('Не вдалося зберегти знижку — перевірте адмін-токен (спробуйте ще раз).');
     } finally {
       setSaving(false);
     }

@@ -587,6 +587,37 @@ button {
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
 
+/* Модалка адмін-токена (заміна window.prompt) */
+.token-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 60;
+  width: min(320px, calc(100vw - 48px));
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg, 0 8px 30px rgba(0, 0, 0, 0.3));
+}
+.token-modal h3 { margin: 0 0 var(--space-2); font-size: var(--text-base); }
+.token-hint { margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--danger); }
+.token-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-alt);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-base);
+  margin-bottom: var(--space-3);
+}
+.token-input:focus { outline: none; border-color: var(--fg-muted); }
+.token-actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
+.token-actions .btn-primary { padding: 6px 16px; width: auto; }
+
 .sheet {
   position: fixed;
   left: 0;
