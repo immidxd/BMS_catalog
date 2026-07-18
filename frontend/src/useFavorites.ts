@@ -1,52 +1,67 @@
-// «Обране» користувача. Стійка модель:
-//  • localStorage — довговічний бекап ЗАВЖДИ (працює навіть без initData/сервера,
-//    напр. якщо Mini App відкрито звичайним URL, а не як повноцінний Web App);
-//  • сервер — джерело істини й синхрон між пристроями, КОЛИ є підписаний initData
-//    (за telegram_user_id). Ознака «можемо на сервер» — саме наявність initData,
-//    а НЕ isInTelegram (у Telegram initData інколи порожній → сервер недоступний).
+// «Обране» користувача — НАДІЙНЕ per-user збереження, стійке до проблем з initData/ботом:
+//  • Telegram CloudStorage — основне сховище: Telegram сам тримає його per-user і
+//    синхронізує МІЖ ПРИСТРОЯМИ, без initData/HMAC (працює, навіть коли сервер каталогу
+//    не приймає запит). Авторитетне джерело набору обраного.
+//  • localStorage — локальний бекап (і для звичайного браузера поза Telegram) + міграція
+//    у CloudStorage при першому запуску.
+//  • Сервер (/api/favorites) — лише best-effort, щоб оновити ПУБЛІЧНИЙ лічильник ♥️
+//    (потребує коректного initData/бота; на персональне збереження вже не впливає).
 import { useCallback, useEffect, useState } from 'react';
-import { fetchFavorites, toggleFavoriteServer } from './api';
-import { initDataRaw } from './telegram';
+import { toggleFavoriteServer } from './api';
+import { cloudGet, cloudSet, cloudStorageAvailable, initDataRaw } from './telegram';
 
-const LS_KEY = 'tg-shop-favorites';
+const CS_KEY = 'favorites';            // ключ у Telegram CloudStorage
+const LS_KEY = 'tg-shop-favorites';    // локальний бекап
+
 const loadLocal = (): string[] => {
   try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); } catch { return []; }
 };
 const saveLocal = (list: string[]): void => {
   try { localStorage.setItem(LS_KEY, JSON.stringify(list)); } catch { /* private mode */ }
 };
+const parse = (raw: string | null): string[] => {
+  try { return raw ? JSON.parse(raw) : []; } catch { return []; }
+};
 
 export const useFavorites = () => {
-  // Старт із localStorage — миттєво й довговічно (не зникає при повторному вході).
   const [favSet, setFavSet] = useState<Set<string>>(() => new Set(loadLocal()));
 
-  // Є підписаний initData → тягнемо серверний список (він стає джерелом істини) і
-  // дзеркалимо в localStorage. Немає initData / сервер недоступний → лишаємось локально.
+  // Завантаження з CloudStorage (якщо доступний). Уже ініціалізований → авторитетний
+  // (видалення теж поширюються). Ще не ініціалізований → мігруємо локальний бекап у хмару.
   useEffect(() => {
-    const init = initDataRaw();
-    if (!init) return;
-    fetchFavorites(init)
-      .then((list) => { setFavSet(new Set(list)); saveLocal(list); })
-      .catch(() => { /* лишаємось на локальному бекапі */ });
+    let cancelled = false;
+    (async () => {
+      if (!cloudStorageAvailable()) return;   // поза Mini App → лишаємось на localStorage
+      const raw = await cloudGet(CS_KEY);
+      if (cancelled) return;
+      if (raw && raw !== '') {
+        const list = parse(raw);
+        setFavSet(new Set(list));
+        saveLocal(list);
+      } else {
+        const local = loadLocal();
+        if (local.length) void cloudSet(CS_KEY, JSON.stringify(local));
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   const isFav = useCallback((pn: string) => favSet.has(pn), [favSet]);
 
-  // Оптимістично перемикаємо; ЗАВЖДИ зберігаємо локально; за наявності initData —
-  // ще й на сервер (звідти приходить публічний лічильник ♥️).
   const toggle = useCallback((pn: string): Promise<{ favorite: boolean; fav_count?: number }> => {
     const next = !favSet.has(pn);
-    setFavSet((cur) => {
-      const s = new Set(cur);
-      next ? s.add(pn) : s.delete(pn);
-      saveLocal([...s]);
-      return s;
-    });
+    const s = new Set(favSet);
+    next ? s.add(pn) : s.delete(pn);
+    const list = [...s];
+    setFavSet(s);
+    saveLocal(list);                          // локальний бекап
+    void cloudSet(CS_KEY, JSON.stringify(list));   // per-user хмара Telegram (синхрон пристроїв)
+    // Сервер — лише для публічного лічильника ♥️ (best-effort; не критично для персонального обраного)
     const init = initDataRaw();
     if (init) {
       return toggleFavoriteServer(pn, next, init)
         .then((r) => ({ favorite: next, fav_count: r.fav_count }))
-        .catch(() => ({ favorite: next }));   // сервер впав → лишається локально
+        .catch(() => ({ favorite: next }));
     }
     return Promise.resolve({ favorite: next });
   }, [favSet]);

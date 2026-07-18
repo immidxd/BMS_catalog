@@ -185,6 +185,11 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
     return base.concat((draft.size_letters ?? []).filter((l) => !base.includes(l)));
   }, [options.size_letters, draft.size_letters]);
 
+  // Для поточного набору немає жодного доступного розміру (напр. обрано лише «Сумки»,
+  // що розмірів не мають) → секцію «Розмір» ховаємо, щоб не показувати сітку сірих
+  // недоступних чисел. Якщо розмір усе ж вибрано — лишаємо (щоб можна було зняти).
+  const noSizesAvail = facets != null && (euAvail?.size ?? 0) === 0 && (letterAvail?.size ?? 0) === 0;
+
   // Блокуємо прокрутку каталогу під листом
   useEffect(() => {
     document.body.style.overflow = 'hidden';
@@ -248,7 +253,14 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
       <div className="sheet" role="dialog" aria-label="Фільтри">
         <div className="sheet-header">
           <h2>Фільтри</h2>
-          <button type="button" className="sheet-reset" onClick={handleReset}>Скинути все</button>
+          {countActiveFilters(draft) > 0 && (
+            <button type="button" className="sheet-reset" onClick={handleReset}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" />
+              </svg>
+              Скинути ({countActiveFilters(draft)})
+            </button>
+          )}
         </div>
 
         <div className="sheet-body">
@@ -268,6 +280,7 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
             />
           )}
 
+          {(!noSizesAvail || sizeBadge > 0) && (
           <Accordion title="Розмір" badge={sizeBadge} summary={sizeSummary}
             open={openSections.has('size')} onToggle={() => toggleSection('size')}>
             {euUniverse.length > 0 && (
@@ -310,6 +323,7 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
               <div className="show-more-hint">Немає доступних розмірів</div>
             )}
           </Accordion>
+          )}
 
           {options.types.length > 0 && (
             <Accordion title="Тип" badge={draft.typeids?.length ?? 0}

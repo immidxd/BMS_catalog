@@ -565,7 +565,19 @@ button {
 
 .sheet-header h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; }
 
-.sheet-reset { color: var(--fg-subtle); font-size: var(--text-sm); padding: var(--space-1); }
+.sheet-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-alt);
+}
+.sheet-reset svg { flex: none; }
 
 .sheet-body {
   overflow-y: auto;

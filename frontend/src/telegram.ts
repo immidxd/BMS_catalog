@@ -14,6 +14,12 @@ type TelegramWebApp = {
   openLink?: (url: string) => void;
   onEvent: (event: string, cb: () => void) => void;
   initDataUnsafe?: { user?: { id?: number } };
+  // CloudStorage (Bot API 6.9+): per-user сховище в хмарі Telegram, синхрон між
+  // пристроями, БЕЗ initData/HMAC — надійно зберігає обране навіть коли сервер недоступний.
+  CloudStorage?: {
+    setItem: (key: string, value: string, cb?: (err: unknown, ok?: boolean) => void) => void;
+    getItem: (key: string, cb: (err: unknown, value?: string) => void) => void;
+  };
 };
 
 declare global {
@@ -112,6 +118,22 @@ export const openExternal = (url: string): void => {
   if (isInTelegram && tg!.openLink) tg!.openLink(url);
   else window.open(url, '_blank');
 };
+// ── Telegram CloudStorage: per-user надійне сховище (для «Обраного») ──────────
+export const cloudStorageAvailable = (): boolean => Boolean(tg?.CloudStorage);
+
+export const cloudGet = (key: string): Promise<string | null> =>
+  new Promise((resolve) => {
+    if (!tg?.CloudStorage) return resolve(null);
+    try { tg.CloudStorage.getItem(key, (err, val) => resolve(err ? null : (val ?? null))); }
+    catch { resolve(null); }
+  });
+
+export const cloudSet = (key: string, value: string): Promise<void> =>
+  new Promise((resolve) => {
+    if (!tg?.CloudStorage) return resolve();
+    try { tg.CloudStorage.setItem(key, value, () => resolve()); } catch { resolve(); }
+  });
+
 export const contactPhone = (phone: string): void => openExternal(`tel:${phone.replace(/\s/g, '')}`);
 export const contactInstagram = (handle: string): void => openExternal(`https://instagram.com/${handle}`);
 export const contactViber = (phone: string): void => openExternal(`viber://chat?number=${encodeURIComponent(phone.replace(/\s/g, ''))}`);
