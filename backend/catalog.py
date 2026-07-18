@@ -99,6 +99,15 @@ def _ensure_discount_columns(db: Session) -> None:
     db.commit()
 
 
+def _ensure_featured_order_column(db: Session) -> None:
+    """Порядок рекомендованих товарів у вітрині (адмін перетягує). Менше = вище.
+    Адитивна колонка; впливає ЛИШЕ на сортування рекомендованих у сітці «Новинки»."""
+    db.execute(text(
+        "ALTER TABLE catalog_listings ADD COLUMN IF NOT EXISTS featured_order integer"
+    ))
+    db.commit()
+
+
 # «Продано» = Подарунок(7) АБО (Підтверджено(1) І Оплачено(1)), мінус Повернення(9).
 _SOLD_JOIN = """
     LEFT JOIN (
@@ -379,7 +388,8 @@ async def get_catalog(
     # «Рекомендовані» спливають угору лише у дефолтній (кураторській) сітці «Новинки»;
     # при явному сортуванні за ціною поважаємо вибір користувача без піну.
     if sort == "newest":
-        order_by = "BOOL_OR(featured) DESC, " + order_by
+        # Рекомендовані — вгорі, у порядку featured_order (адмін перетягує); далі за датою.
+        order_by = "BOOL_OR(featured) DESC, MIN(featured_order) ASC NULLS LAST, " + order_by
     group_key = _OFFER_SIG if group_offers else "productnumber"
     where_sql, params = _build_filters(
         search, typeids, subtypeids, brandids, genderids, color_group_ids,
@@ -405,6 +415,7 @@ async def get_catalog(
                    BOOL_OR(COALESCE(cl.is_published, FALSE)) AS published,
                    BOOL_OR(COALESCE(cl.is_on_sale, FALSE)) AS on_sale,
                    MIN(cl.sale_price) AS sale_price,
+                   MIN(cl.featured_order) AS featured_order,
                    MIN(p.brandid) AS brandid, MIN(p.typeid) AS typeid, MIN(p.colorid) AS colorid,
                    lower(btrim(coalesce(MIN(p.model), ''))) AS model_key,
                    lower(btrim(coalesce(MIN(p.season), ''))) AS season_key,
@@ -429,7 +440,8 @@ async def get_catalog(
                    MIN(season) AS season, MIN(brandname) AS brandname, MIN(typename) AS typename,
                    MIN(measurementscm) AS measurementscm,
                    BOOL_OR(featured) AS featured, BOOL_OR(published) AS published,
-                   BOOL_OR(on_sale) AS on_sale, MIN(sale_price) AS sale_price
+                   BOOL_OR(on_sale) AS on_sale, MIN(sale_price) AS sale_price,
+                   MIN(featured_order) AS featured_order
             FROM per_number
             GROUP BY {group_key}
             ORDER BY {order_by}

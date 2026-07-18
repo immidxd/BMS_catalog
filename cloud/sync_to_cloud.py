@@ -68,7 +68,7 @@ def _merge_catalog_listings(lc, cc, local_dsn: dict) -> tuple:
     (тому кожен writer має ставити updated_at=now())."""
     # Колонки в СТАЛОМУ порядку; updated_at — останній (індекс для newest-wins).
     COLS = ["productnumber", "is_published", "is_featured", "is_description_public",
-            "sale_price", "is_on_sale", "published_at", "updated_at"]
+            "sale_price", "is_on_sale", "featured_order", "published_at", "updated_at"]
     U = COLS.index("updated_at")
     collist = ", ".join(COLS)
     sel = f"SELECT {collist} FROM catalog_listings"
@@ -85,6 +85,7 @@ def _merge_catalog_listings(lc, cc, local_dsn: dict) -> tuple:
         "ADD COLUMN IF NOT EXISTS is_description_public boolean NOT NULL DEFAULT false",
         "ADD COLUMN IF NOT EXISTS sale_price numeric",
         "ADD COLUMN IF NOT EXISTS is_on_sale boolean NOT NULL DEFAULT false",
+        "ADD COLUMN IF NOT EXISTS featured_order integer",
     ]
     for ddl in feature_ddl:
         cc.execute(f"ALTER TABLE catalog_listings {ddl}")
@@ -131,6 +132,7 @@ def _merge_catalog_listings(lc, cc, local_dsn: dict) -> tuple:
                 "is_published = EXCLUDED.is_published, is_featured = EXCLUDED.is_featured, "
                 "is_description_public = EXCLUDED.is_description_public, "
                 "sale_price = EXCLUDED.sale_price, is_on_sale = EXCLUDED.is_on_sale, "
+                "featured_order = EXCLUDED.featured_order, "
                 "published_at = EXCLUDED.published_at, updated_at = EXCLUDED.updated_at",
                 newer)
             lrw.commit()

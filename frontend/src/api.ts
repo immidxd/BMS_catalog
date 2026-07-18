@@ -224,6 +224,17 @@ export const setCatalogDescription = async (
   return res.json();
 };
 
+// Ідемпотентно синхронізує обране (з CloudStorage) у серверний лічильник ♥️ і повертає
+// актуальні counts — щоб лічильники «наздогнали» обране зі старого бандла/іншого пристрою.
+export const syncFavorites = (
+  productnumbers: string[], initData: string, userId?: number | null,
+): Promise<Record<string, number>> =>
+  fetch('/api/favorites/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+    body: JSON.stringify({ productnumbers, user_id: userId ?? undefined }),
+  }).then((r) => (r.ok ? r.json() : { counts: {} })).then((d) => d.counts || {}).catch(() => ({}));
+
 // ── Адмін: знижка (Фаза C) — акційна ціна лише для вітрини ────────────────────
 export const setCatalogDiscount = async (
   payload: { productnumber: string; sale_price: number | null; is_on_sale: boolean },
@@ -242,6 +253,17 @@ export const setCatalogDiscount = async (
 // Відсоток знижки (для бейджа «−X%») — округлений
 export const discountPct = (price: number, salePrice: number): number =>
   Math.round((1 - salePrice / price) * 100);
+
+// Адмін: порядок рекомендованих товарів у вітрині (після перетягування)
+export const setFeaturedOrder = async (productnumbers: string[], auth: AdminAuth): Promise<void> => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (auth.initData) headers['X-Telegram-Init-Data'] = auth.initData;
+  else if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+  const res = await fetch('/api/admin/catalog/featured-order', {
+    method: 'PATCH', headers, body: JSON.stringify({ productnumbers }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+};
 
 export const formatPrice = (price: number): string =>
   `${new Intl.NumberFormat('uk-UA').format(price)} грн`;

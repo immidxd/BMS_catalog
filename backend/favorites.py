@@ -84,3 +84,30 @@ async def toggle_favorite(
         text("SELECT COUNT(*) FROM catalog_favorites WHERE productnumber = :pn"), {"pn": pnum}
     ).scalar() or 0
     return {"productnumber": pnum, "favorite": favorite, "fav_count": int(count)}
+
+
+@router.post("/api/favorites/sync")
+async def sync_favorites(
+    productnumbers: List[str] = Body(..., embed=True),
+    user_id: Optional[int] = Body(None, embed=True),
+    x_telegram_init_data: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Ідемпотентно синхронізує обране користувача (з CloudStorage) у серверний лічильник
+    (INSERT ON CONFLICT DO NOTHING) і повертає актуальні лічильники ♥️ по цих номерах.
+    Так counts «наздоганяють» обране, зроблене на старому бандлі / іншому пристрої."""
+    uid = _count_user(x_telegram_init_data, user_id)
+    pns = list({p.strip() for p in (productnumbers or []) if p and p.strip()})
+    if pns:
+        db.execute(text("""
+            INSERT INTO catalog_favorites (telegram_user_id, productnumber)
+            SELECT :uid, unnest(CAST(:pns AS text[]))
+            ON CONFLICT DO NOTHING
+        """), {"uid": uid, "pns": pns})
+        db.commit()
+        rows = db.execute(text(
+            "SELECT productnumber, COUNT(*) FROM catalog_favorites "
+            "WHERE productnumber = ANY(:pns) GROUP BY productnumber"
+        ), {"pns": pns}).all()
+        return {"counts": {r[0]: int(r[1]) for r in rows}}
+    return {"counts": {}}

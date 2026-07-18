@@ -63,11 +63,13 @@ def _ensure_catalog_tables() -> None:
     try:
         from database import SessionLocal
         from catalog import (_ensure_description_public_column, _ensure_discount_columns,
-                             _ensure_favorites_table, _ensure_views_table)
+                             _ensure_favorites_table, _ensure_featured_order_column,
+                             _ensure_views_table)
     except Exception:
         return
     for ensure in (_ensure_views_table, _ensure_favorites_table,
-                   _ensure_description_public_column, _ensure_discount_columns):
+                   _ensure_description_public_column, _ensure_discount_columns,
+                   _ensure_featured_order_column):
         db = SessionLocal()
         try:
             ensure(db)

@@ -1,4 +1,5 @@
 // Картка товару в сітці каталогу
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { CatalogItem, discountPct, formatPrice, formatSeason } from '../api';
 
 // priority — для перших видимих карток (above the fold): вантажимо одразу й
@@ -10,6 +11,9 @@ type Props = {
   priority?: boolean;
   admin?: boolean;
   onTogglePublish?: (item: CatalogItem) => void;
+  onToggleFeatured?: (item: CatalogItem) => void;   // тумблер «Рекомендований» (адмін)
+  onFeatDragStart?: (item: CatalogItem, e: ReactPointerEvent) => void;   // початок перетягування
+  dragging?: boolean;                       // цю картку зараз перетягують
   isFav?: boolean;                          // чи товар у «Обраному» користувача
   onToggleFav?: (item: CatalogItem) => void;
 };
@@ -22,7 +26,7 @@ const sizeLabel = (item: CatalogItem): string | null => {
   return null;
 };
 
-export const ProductCard = ({ item, onOpen, priority = false, admin = false, onTogglePublish, isFav = false, onToggleFav }: Props) => {
+export const ProductCard = ({ item, onOpen, priority = false, admin = false, onTogglePublish, onToggleFeatured, onFeatDragStart, dragging = false, isFav = false, onToggleFav }: Props) => {
   const size = sizeLabel(item);
   const favCount = item.fav_count ?? 0;
   // Знижка: акційна ціна лише для вітрини (products.price не чіпаємо)
@@ -31,14 +35,26 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
   const original = onSale ? item.price
     : (item.oldprice && item.oldprice > item.price ? item.oldprice : null);
   // «unlisted» (не в каталозі) бачить лише адмін — публіці неопубліковані не доходять
+  const showFeatBadge = item.published && !onSale && item.featured;
   return (
-    <div className="card-wrap">
+    <div className={`card-wrap${dragging ? ' dragging' : ''}`} data-pn={item.productnumber}>
     <button type="button" className={`card${item.published ? '' : ' unlisted'}`}
       onClick={() => onOpen(item.id)} aria-label={`Товар ${item.productnumber}`}>
       <div className="card-image">
         {!item.published && <span className="unlisted-badge">не в каталозі</span>}
         {item.published && onSale && <span className="sale-badge">−{discountPct(item.price, item.sale_price!)}%</span>}
-        {item.published && !onSale && item.featured && <span className="featured-badge">Рекомендований</span>}
+        {/* Публіці — бейдж «Рекомендований»; адміну — ручка перетягування (порядок) */}
+        {showFeatBadge && !(admin && onFeatDragStart) && <span className="featured-badge">Рекомендований</span>}
+        {showFeatBadge && admin && onFeatDragStart && (
+          <span className="feat-grip" title="Перетягніть, щоб змінити порядок рекомендованих"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+              onFeatDragStart(item, e);
+            }}>
+            <GripIcon /> Рекомендований
+          </span>
+        )}
         {/* «Обране» ♥️ — у кутку фото: тап додає/прибирає, поряд публічний лічильник */}
         {onToggleFav && (
           <button type="button"
@@ -83,9 +99,34 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
           {item.published ? <EyeIcon /> : <EyeOffIcon />}
         </button>
       )}
+      {/* «Рекомендований» — тумблер прямо в каталозі (лише опублікований товар) */}
+      {admin && onToggleFeatured && item.published && (
+        <button type="button"
+          className={`feat-fab${item.featured ? ' on' : ''}`}
+          onClick={(e) => { e.stopPropagation(); onToggleFeatured(item); }}
+          aria-pressed={item.featured}
+          title={item.featured ? 'Прибрати «Рекомендований»' : 'Позначити «Рекомендований»'}>
+          <StarIcon filled={item.featured} />
+        </button>
+      )}
     </div>
   );
 };
+
+const GripIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <circle cx="9" cy="6" r="1.6" /><circle cx="15" cy="6" r="1.6" />
+    <circle cx="9" cy="12" r="1.6" /><circle cx="15" cy="12" r="1.6" />
+    <circle cx="9" cy="18" r="1.6" /><circle cx="15" cy="18" r="1.6" />
+  </svg>
+);
+
+const StarIcon = ({ filled }: { filled?: boolean }) => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'}
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polygon points="12 2 15.1 8.6 22 9.3 17 14.1 18.2 21 12 17.6 5.8 21 7 14.1 2 9.3 8.9 8.6 12 2" />
+  </svg>
+);
 
 const HeartIcon = ({ filled }: { filled?: boolean }) => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'}

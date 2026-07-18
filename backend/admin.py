@@ -5,7 +5,7 @@ auth.authorize_admin (Telegram initData або адмін-токен). Публ�
 read-only й цього роутера не торкається.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from sqlalchemy import text
@@ -135,3 +135,28 @@ async def set_catalog_discount(
     """), {"pn": pnum, "sp": price, "on": on})
     db.commit()
     return {"productnumber": pnum, "sale_price": price, "is_on_sale": on}
+
+
+@router.patch("/api/admin/catalog/featured-order", response_model=Dict[str, Any])
+async def set_featured_order(
+    productnumbers: List[str] = Body(..., embed=True),   # рекомендовані у НОВОМУ порядку
+    authorization: Optional[str] = Header(None),
+    x_telegram_init_data: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Адмін: порядок рекомендованих товарів у вітрині (перетягуванням). Пишемо
+    featured_order = позиція у списку. Впливає ЛИШЕ на сортування рекомендованих."""
+    if not admin_writes_enabled():
+        raise HTTPException(status_code=503, detail="Адмін-запис не налаштовано")
+    if not authorize_admin(authorization, x_telegram_init_data):
+        raise HTTPException(status_code=401, detail="Не авторизовано")
+
+    pns = [p.strip() for p in (productnumbers or []) if p and p.strip()]
+    for i, pn in enumerate(pns):
+        db.execute(text("""
+            INSERT INTO catalog_listings (productnumber, is_published, is_featured, featured_order, updated_at)
+            VALUES (:pn, TRUE, TRUE, :ord, now())
+            ON CONFLICT (productnumber) DO UPDATE SET featured_order = :ord, updated_at = now()
+        """), {"pn": pn, "ord": i})
+    db.commit()
+    return {"count": len(pns)}
