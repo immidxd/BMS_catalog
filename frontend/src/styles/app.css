@@ -486,6 +486,7 @@ button {
 .feat-fab.on { background: #f5a623; }   /* рекомендований → бурштиновий (зірка) */
 
 /* Ручка перетягування рекомендованих (адмін): замість бейджа «Рекомендований» */
+/* Дві явні зони: іконка+текст (тягне — порядок) і хрестик (прибирає) — без прихованих жестів */
 .feat-grip {
   position: absolute;
   top: var(--space-2);
@@ -493,19 +494,38 @@ button {
   z-index: 4;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 9px 3px 6px;
   border-radius: var(--radius-full);
   background: var(--primary);
   color: var(--on-primary);
   font-size: 11px;
   font-weight: 600;
+  overflow: hidden;
+}
+.feat-grip-handle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 7px;
   cursor: grab;
   touch-action: none;   /* щоб перетягування не скролило сторінку */
   user-select: none;
 }
-.feat-grip:active { cursor: grabbing; }
+.feat-grip-handle:active { cursor: grabbing; }
 .feat-grip svg { flex: none; }
+.feat-grip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 100%;
+  padding: 4px 6px 4px 4px;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  color: var(--on-primary);
+  cursor: pointer;
+}
+.feat-grip-remove:active { background: rgba(0, 0, 0, 0.15); }
 .card-wrap.dragging { opacity: 0.45; transition: opacity var(--dur-fast) var(--ease); }
 
 .card-image img {
