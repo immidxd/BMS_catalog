@@ -43,26 +43,17 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
       <div className="card-image">
         {!item.published && <span className="unlisted-badge">не в каталозі</span>}
         {item.published && onSale && <span className="sale-badge">−{discountPct(item.price, item.sale_price!)}%</span>}
-        {/* Публіці — бейдж «Рекомендований»; адміну — дві явні зони: іконка тягне
-            (порядок), хрестик прибирає з рекомендованих. Без прихованих жестів. */}
-        {showFeatBadge && !(admin && onFeatDragStart) && <span className="featured-badge">Рекомендований</span>}
+        {/* Публіці — бейдж «Рекомендований»; адміну на рекомендованій — маленька
+            ручка ⠿ (лише перетягування порядку). Додати/прибрати — зірка (нижче). */}
+        {showFeatBadge && !admin && <span className="featured-badge">Рекомендований</span>}
         {showFeatBadge && admin && onFeatDragStart && (
-          <span className="feat-grip">
-            <span className="feat-grip-handle" title="Перетягніть, щоб змінити порядок"
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-                onFeatDragStart(item, e);
-              }}>
-              <GripIcon /> Рекомендований
-            </span>
-            {onToggleFeatured && (
-              <button type="button" className="feat-grip-remove"
-                title="Прибрати з рекомендованих"
-                onClick={(e) => { e.stopPropagation(); onToggleFeatured(item); }}>
-                <CloseIcon />
-              </button>
-            )}
+          <span className="feat-grip" title="Перетягніть, щоб змінити порядок рекомендованих"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+              onFeatDragStart(item, e);
+            }}>
+            <GripIcon />
           </span>
         )}
         {/* «Обране» ♥️ — у кутку фото: тап додає/прибирає, поряд публічний лічильник */}
@@ -109,25 +100,20 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
           {item.published ? <EyeIcon /> : <EyeOffIcon />}
         </button>
       )}
-      {/* Додати в «Рекомендовані» — маленька зірка лише на НЕ-рекомендованих картках.
-          На рекомендованих натомість грип (перетягнути — порядок; тап — прибрати). */}
-      {admin && onToggleFeatured && item.published && !item.featured && (
+      {/* Зірка — тумблер «Рекомендований» в ОБИДВА боки: залита (прибрати) / порожня (додати).
+          Одна консистентна кнопка на всіх опублікованих картках. Грип ⠿ — окремо, лише порядок. */}
+      {admin && onToggleFeatured && item.published && (
         <button type="button"
-          className="feat-fab"
+          className={`feat-fab${item.featured ? ' on' : ''}`}
           onClick={(e) => { e.stopPropagation(); onToggleFeatured(item); }}
-          title="Позначити «Рекомендований»">
-          <StarIcon />
+          aria-pressed={item.featured}
+          title={item.featured ? 'Прибрати з рекомендованих' : 'Позначити «Рекомендований»'}>
+          <StarIcon filled={item.featured} />
         </button>
       )}
     </div>
   );
 };
-
-const CloseIcon = () => (
-  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
-    <path d="M6 6l12 12M18 6L6 18" />
-  </svg>
-);
 
 const GripIcon = () => (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

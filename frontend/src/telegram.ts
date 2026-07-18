@@ -139,7 +139,7 @@ export const cloudSet = (key: string, value: string): Promise<void> =>
 // однаково при 401 (невалідний токен), щоб наступний адмін-тап одразу перепитав новий.
 export const ADMIN_TOKEN_KEY = 'tg-shop-admin-token';
 export const clearAdminToken = (): void => {
-  if (!isInTelegram) localStorage.removeItem(ADMIN_TOKEN_KEY);
+  try { localStorage.removeItem(ADMIN_TOKEN_KEY); } catch { /* private mode */ }
 };
 
 export const contactPhone = (phone: string): void => openExternal(`tel:${phone.replace(/\s/g, '')}`);
