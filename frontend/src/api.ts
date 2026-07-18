@@ -17,6 +17,8 @@ export type CatalogItem = {
   published: boolean;   // для адмін-сітки: видно, що ввімкнено в каталог
   views?: number;       // перегляди картки (адмін-бейдж)
   fav_count?: number;   // скільки людей додали в «Обране» (♥️, публічно)
+  on_sale?: boolean;    // чи діє знижка (акційна ціна для вітрини)
+  sale_price?: number | null;   // акційна ціна
 };
 
 export type CatalogResponse = {
@@ -93,6 +95,8 @@ export type ProductDetail = {
   description_public?: boolean;   // чи опис публічний (адмін керує)
   views?: number;       // перегляди картки (адмін)
   fav_count?: number;   // скільки людей у «Обраному» (♥️)
+  on_sale?: boolean;    // чи діє знижка
+  sale_price?: number | null;   // акційна ціна (для вітрини)
 };
 
 export type CatalogQuery = {
@@ -217,6 +221,25 @@ export const setCatalogDescription = async (
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 };
+
+// ── Адмін: знижка (Фаза C) — акційна ціна лише для вітрини ────────────────────
+export const setCatalogDiscount = async (
+  payload: { productnumber: string; sale_price: number | null; is_on_sale: boolean },
+  auth: AdminAuth,
+): Promise<{ sale_price: number | null; is_on_sale: boolean }> => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (auth.initData) headers['X-Telegram-Init-Data'] = auth.initData;
+  else if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+  const res = await fetch('/api/admin/catalog/discount', {
+    method: 'PATCH', headers, body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+// Відсоток знижки (для бейджа «−X%») — округлений
+export const discountPct = (price: number, salePrice: number): number =>
+  Math.round((1 - salePrice / price) * 100);
 
 export const formatPrice = (price: number): string =>
   `${new Intl.NumberFormat('uk-UA').format(price)} грн`;

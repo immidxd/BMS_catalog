@@ -1,5 +1,5 @@
 // Картка товару в сітці каталогу
-import { CatalogItem, formatPrice, formatSeason } from '../api';
+import { CatalogItem, discountPct, formatPrice, formatSeason } from '../api';
 
 // priority — для перших видимих карток (above the fold): вантажимо одразу й
 // з високим пріоритетом; решта — lazy (браузер сам відкладе позаекранні).
@@ -25,14 +25,20 @@ const sizeLabel = (item: CatalogItem): string | null => {
 export const ProductCard = ({ item, onOpen, priority = false, admin = false, onTogglePublish, isFav = false, onToggleFav }: Props) => {
   const size = sizeLabel(item);
   const favCount = item.fav_count ?? 0;
+  // Знижка: акційна ціна лише для вітрини (products.price не чіпаємо)
+  const onSale = !!item.on_sale && item.sale_price != null;
+  const shownPrice = onSale ? item.sale_price! : item.price;
+  const original = onSale ? item.price
+    : (item.oldprice && item.oldprice > item.price ? item.oldprice : null);
   // «unlisted» (не в каталозі) бачить лише адмін — публіці неопубліковані не доходять
   return (
     <div className="card-wrap">
     <button type="button" className={`card${item.published ? '' : ' unlisted'}`}
       onClick={() => onOpen(item.id)} aria-label={`Товар ${item.productnumber}`}>
       <div className="card-image">
-        {item.featured && <span className="featured-badge">Рекомендований</span>}
         {!item.published && <span className="unlisted-badge">не в каталозі</span>}
+        {item.published && onSale && <span className="sale-badge">−{discountPct(item.price, item.sale_price!)}%</span>}
+        {item.published && !onSale && item.featured && <span className="featured-badge">Рекомендований</span>}
         {/* «Обране» ♥️ — у кутку фото: тап додає/прибирає, поряд публічний лічильник */}
         {onToggleFav && (
           <button type="button"
@@ -62,10 +68,8 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
         <div className="card-title">{item.model ?? item.type ?? 'Без назви'}</div>
         <div className="card-meta">{[size, formatSeason(item.season)].filter(Boolean).join(' · ') || ' '}</div>
         <div>
-          <span className="price">{formatPrice(item.price)}</span>
-          {item.oldprice && item.oldprice > item.price && (
-            <span className="price-old">{formatPrice(item.oldprice)}</span>
-          )}
+          <span className={`price${onSale ? ' sale' : ''}`}>{formatPrice(shownPrice)}</span>
+          {original && <span className="price-old">{formatPrice(original)}</span>}
         </div>
       </div>
     </button>

@@ -85,6 +85,20 @@ def _ensure_description_public_column(db: Session) -> None:
     db.commit()
 
 
+def _ensure_discount_columns(db: Session) -> None:
+    """Знижка — адитивні колонки в catalog_listings. sale_price — АКЦІЙНА ціна ЛИШЕ
+    для вітрини (products.price НЕ чіпаємо → Prom/OLX/облік з реальною ціною).
+    is_on_sale — чи показувати знижку (щоб не будь-яка ціна ставала «акцією»)."""
+    db.execute(text(
+        "ALTER TABLE catalog_listings ADD COLUMN IF NOT EXISTS sale_price numeric"
+    ))
+    db.execute(text(
+        "ALTER TABLE catalog_listings ADD COLUMN IF NOT EXISTS "
+        "is_on_sale boolean NOT NULL DEFAULT FALSE"
+    ))
+    db.commit()
+
+
 # «Продано» = Подарунок(7) АБО (Підтверджено(1) І Оплачено(1)), мінус Повернення(9).
 _SOLD_JOIN = """
     LEFT JOIN (
@@ -389,6 +403,8 @@ async def get_catalog(
                    MAX(p.dateadded) AS dateadded,
                    BOOL_OR(COALESCE(cl.is_featured, FALSE)) AS featured,
                    BOOL_OR(COALESCE(cl.is_published, FALSE)) AS published,
+                   BOOL_OR(COALESCE(cl.is_on_sale, FALSE)) AS on_sale,
+                   MIN(cl.sale_price) AS sale_price,
                    MIN(p.brandid) AS brandid, MIN(p.typeid) AS typeid, MIN(p.colorid) AS colorid,
                    lower(btrim(coalesce(MIN(p.model), ''))) AS model_key,
                    lower(btrim(coalesce(MIN(p.season), ''))) AS season_key,
@@ -412,7 +428,8 @@ async def get_catalog(
                    MIN(model) AS model, MIN(price) AS price, MAX(oldprice) AS oldprice,
                    MIN(season) AS season, MIN(brandname) AS brandname, MIN(typename) AS typename,
                    MIN(measurementscm) AS measurementscm,
-                   BOOL_OR(featured) AS featured, BOOL_OR(published) AS published
+                   BOOL_OR(featured) AS featured, BOOL_OR(published) AS published,
+                   BOOL_OR(on_sale) AS on_sale, MIN(sale_price) AS sale_price
             FROM per_number
             GROUP BY {group_key}
             ORDER BY {order_by}
@@ -448,6 +465,10 @@ async def get_catalog(
             "image": image,
             "featured": r["featured"],
             "published": r["published"],   # для адмін-сітки (бачить пул і що ввімкнено)
+            # Знижка (акційна ціна ЛИШЕ для вітрини): фронт покаже −X% і закреслить оригінал.
+            "on_sale": bool(r["on_sale"]) and r["sale_price"] is not None
+                        and float(r["sale_price"]) > 0 and float(r["sale_price"]) < float(r["price"]),
+            "sale_price": float(r["sale_price"]) if r["sale_price"] is not None else None,
         })
 
     # Перегляди на картку (для адмін-бейджа) — один батч-запит по представниках.
@@ -728,6 +749,7 @@ async def get_catalog_product(
                    COALESCE(cl.is_published, FALSE) AS published,
                    COALESCE(cl.is_featured, FALSE) AS featured,
                    COALESCE(cl.is_description_public, FALSE) AS description_public,
+                   COALESCE(cl.is_on_sale, FALSE) AS on_sale, cl.sale_price AS sale_price,
                    p.brandid, p.typeid, p.colorid,
                    COALESCE(p.current_conditionid, p.conditionid) AS sig_cond,
                    p.price, p.oldprice, p.sizeeu, p.sizeua, p.measurementscm,
@@ -852,6 +874,11 @@ async def get_catalog_product(
     # false) бачить опис завжди (для перегляду/редагування).
     if only_published and not row["description_public"]:
         out["description"] = None
+
+    # Знижка (акційна ціна лише для вітрини): валідна, коли ввімкнено й 0 < sale < price
+    sale = float(row["sale_price"]) if row["sale_price"] is not None else None
+    out["sale_price"] = sale
+    out["on_sale"] = bool(row["on_sale"]) and sale is not None and 0 < sale < float(row["price"])
 
     # Лічильник «Обране» (♥️) — публічний
     fav_count = 0

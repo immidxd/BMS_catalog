@@ -1,6 +1,6 @@
 // Повна сторінка товару: галерея (свайп), характеристики, зв'язок з продавцем
 import React, { useEffect, useRef, useState } from 'react';
-import { AdminAuth, ProductDetail, fetchProduct, formatPrice, formatSeason, setCatalogDescription } from '../api';
+import { AdminAuth, ProductDetail, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
 import { parseTechnologies } from '../techLogos';
 import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
 
@@ -230,6 +230,12 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
   // «брудний» рядок у бейджі; лого підхопиться з /tech-logos/<slug>.svg, якщо є.
   const techs = parseTechnologies(product.technology);
 
+  // Знижка: акційна ціна лише для вітрини (products.price не чіпаємо)
+  const onSale = !!product.on_sale && product.sale_price != null;
+  const shownPrice = onSale ? product.sale_price! : product.price;
+  const priceOriginal = onSale ? product.price
+    : (product.oldprice && product.oldprice > product.price ? product.oldprice : null);
+
   return (
     <div className="product-page" ref={pageRef} onClick={handleBackdrop}>
       {!isInTelegram && <button type="button" className="back-fab" onClick={onBack} aria-label="Назад">←</button>}
@@ -273,11 +279,10 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
         <div className="product-header">
           {subtitle && <div className="product-brand">{subtitle}</div>}
           <h1 className="product-title">{titleText}</h1>
-          <div>
-            <span className="price product-price">{formatPrice(product.price)}</span>
-            {product.oldprice && product.oldprice > product.price && (
-              <span className="price-old">{formatPrice(product.oldprice)}</span>
-            )}
+          <div className="price-row">
+            <span className={`price product-price${onSale ? ' sale' : ''}`}>{formatPrice(shownPrice)}</span>
+            {priceOriginal && <span className="price-old">{formatPrice(priceOriginal)}</span>}
+            {onSale && <span className="sale-badge inline">−{discountPct(product.price, product.sale_price!)}%</span>}
           </div>
           <div className="meta-line">
             {onToggleFav && (
@@ -331,6 +336,12 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
             <p className="description">{cap(product.description)}</p>
           </div>
         ) : null}
+
+        {/* Знижка — керує лише адмін (акційна ціна для вітрини, products.price недоторканий) */}
+        {admin && adminAuth && (
+          <AdminDiscount product={product} auth={adminAuth}
+            onSaved={(r) => setProduct((p) => p ? { ...p, on_sale: r.is_on_sale, sale_price: r.sale_price } : p)} />
+        )}
 
         {techs.length > 0 && (
           <div className="detail-card">
@@ -468,6 +479,69 @@ const AdminDescription = ({ product, auth, onSaved }: {
           {saving ? 'Збереження…' : 'Зберегти опис'}
         </button>
       )}
+    </div>
+  );
+};
+
+// Адмін-контрол знижки: акційна ціна ЛИШЕ для вітрини (products.price не чіпаємо).
+const AdminDiscount = ({ product, auth, onSaved }: {
+  product: ProductDetail;
+  auth: () => AdminAuth | null;
+  onSaved: (r: { sale_price: number | null; is_on_sale: boolean }) => void;
+}) => {
+  const [price, setPrice] = useState(product.sale_price != null ? String(product.sale_price) : '');
+  const [on, setOn] = useState(!!product.on_sale);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setPrice(product.sale_price != null ? String(product.sale_price) : '');
+    setOn(!!product.on_sale);
+  }, [product.id, product.sale_price, product.on_sale]);
+
+  const sp = price.trim() ? Number(price) : null;
+  const valid = sp != null && sp > 0 && sp < product.price;
+
+  const save = async (nextOn: boolean) => {
+    const a = auth();
+    if (!a) return;
+    setSaving(true);
+    try {
+      const r = await setCatalogDiscount(
+        { productnumber: product.productnumber, sale_price: sp, is_on_sale: nextOn }, a);
+      setOn(r.is_on_sale);
+      onSaved(r);
+      haptic('light');
+    } catch {
+      haptic('medium');
+      alert('Не вдалося зберегти знижку (перевірте доступ/токен).');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="detail-card">
+      <h3>
+        Знижка <span className="admin-only-tag">адмін</span>
+        <button type="button" className={`desc-public-toggle${on ? ' on' : ''}`}
+          onClick={() => save(!on)} disabled={saving || (!on && !valid)} aria-pressed={on}
+          title={on ? 'Знижка активна у вітрині' : 'Увімкнути знижку'}>
+          {on ? '● Активна' : 'Увімкнути'}
+        </button>
+      </h3>
+      <div className="discount-row">
+        <input className="discount-input" type="number" inputMode="numeric"
+          placeholder="Акційна ціна" value={price}
+          onChange={(e) => setPrice(e.target.value)} />
+        <span className="discount-hint">
+          {valid
+            ? `−${discountPct(product.price, sp!)}% від ${formatPrice(product.price)}`
+            : `Реальна ціна ${formatPrice(product.price)} (products.price не змінюється)`}
+        </span>
+      </div>
+      <button type="button" className="desc-save" disabled={saving}
+        onClick={() => save(on)}>
+        {saving ? 'Збереження…' : 'Зберегти знижку'}
+      </button>
     </div>
   );
 };

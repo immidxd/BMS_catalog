@@ -98,3 +98,40 @@ async def edit_catalog_description(
     db.commit()
     return {"product_id": product_id, "productnumber": pnum,
             "description": description, "is_description_public": is_public}
+
+
+@router.patch("/api/admin/catalog/discount", response_model=Dict[str, Any])
+async def set_catalog_discount(
+    productnumber: str = Body(..., embed=True),
+    sale_price: Optional[float] = Body(None, embed=True),   # акційна ціна (None → прибрати)
+    is_on_sale: bool = Body(..., embed=True),
+    authorization: Optional[str] = Header(None),
+    x_telegram_init_data: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Адмін: знижка на картку (акційна ціна ЛИШЕ для вітрини — products.price НЕ
+    чіпаємо). Upsert catalog_listings за productnumber (діє на всю картку/ростовку)."""
+    if not admin_writes_enabled():
+        raise HTTPException(status_code=503, detail="Адмін-запис не налаштовано")
+    if not authorize_admin(authorization, x_telegram_init_data):
+        raise HTTPException(status_code=401, detail="Не авторизовано")
+
+    pnum = (productnumber or "").strip()
+    exists = db.execute(
+        text("SELECT 1 FROM products WHERE productnumber = :pn LIMIT 1"), {"pn": pnum}
+    ).scalar()
+    if not exists:
+        raise HTTPException(status_code=404, detail="Товар не знайдено")
+
+    price = None if (sale_price is None or sale_price <= 0) else float(sale_price)
+    on = bool(is_on_sale and price is not None)   # без валідної ціни знижку не вмикаємо
+    db.execute(text("""
+        INSERT INTO catalog_listings (productnumber, is_published, is_featured, sale_price, is_on_sale, updated_at)
+        VALUES (:pn, FALSE, FALSE, :sp, :on, now())
+        ON CONFLICT (productnumber) DO UPDATE SET
+            sale_price = EXCLUDED.sale_price,
+            is_on_sale = EXCLUDED.is_on_sale,
+            updated_at = now()
+    """), {"pn": pnum, "sp": price, "on": on})
+    db.commit()
+    return {"productnumber": pnum, "sale_price": price, "is_on_sale": on}
