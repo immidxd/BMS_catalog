@@ -11,7 +11,9 @@ type Props = {
   onNeedMore?: () => void;           // підвантажити ще (коли дійшли до кінця списку)
   isFavorite?: (pn: string) => boolean;
   onToggleFav?: (pn: string) => Promise<{ favorite: boolean; fav_count?: number }>;
-  adminAuth?: () => AdminAuth | null;   // авторизація адмін-запису (для редагування опису)
+  // Авторизація адмін-запису. onAuthed — колбек: якщо токена ще нема (відкриється
+  // модалка), він АВТОМАТИЧНО повторить дію одразу після введення токена.
+  adminAuth?: (onAuthed?: () => void) => AdminAuth | null;
   sellerUsername: string;
   sellerPhone: string;
   sellerInstagram: string;
@@ -433,7 +435,7 @@ const HeartIcon = ({ filled }: { filled?: boolean }) => (
 // Зміни — ті самі поля в БД, що бачить/редагує BMS.
 const AdminDescription = ({ product, auth, onSaved }: {
   product: ProductDetail;
-  auth: () => AdminAuth | null;
+  auth: (onAuthed?: () => void) => AdminAuth | null;
   onSaved: (patch: { description?: string | null; is_public?: boolean }) => void;
 }) => {
   const [text, setText] = useState(product.description ?? '');
@@ -445,7 +447,7 @@ const AdminDescription = ({ product, auth, onSaved }: {
   const dirty = text.trim() !== (product.description ?? '').trim();
 
   const save = async (patch: { description?: string; is_public?: boolean }) => {
-    const a = auth();
+    const a = auth(() => save(patch));   // токена ще нема → після вводу повторить сам
     if (!a) return;
     setSaving(true);
     try {
@@ -492,7 +494,7 @@ const AdminDescription = ({ product, auth, onSaved }: {
 // Адмін-контрол знижки: акційна ціна ЛИШЕ для вітрини (products.price не чіпаємо).
 const AdminDiscount = ({ product, auth, onSaved }: {
   product: ProductDetail;
-  auth: () => AdminAuth | null;
+  auth: (onAuthed?: () => void) => AdminAuth | null;
   onSaved: (r: { sale_price: number | null; is_on_sale: boolean }) => void;
 }) => {
   const [price, setPrice] = useState(product.sale_price != null ? String(product.sale_price) : '');
@@ -507,7 +509,7 @@ const AdminDiscount = ({ product, auth, onSaved }: {
   const valid = sp != null && sp > 0 && sp < product.price;
 
   const save = async (nextOn: boolean) => {
-    const a = auth();
+    const a = auth(() => save(nextOn));   // токена ще нема → після вводу повторить сам
     if (!a) return;
     setSaving(true);
     try {
