@@ -603,6 +603,7 @@ button {
 }
 .token-modal h3 { margin: 0 0 var(--space-2); font-size: var(--text-base); }
 .token-hint { margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--danger); }
+.token-help { margin: var(--space-2) 0 0; font-size: var(--text-xs); color: var(--fg-subtle); line-height: 1.4; }
 .token-input {
   width: 100%;
   box-sizing: border-box;
