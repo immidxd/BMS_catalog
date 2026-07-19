@@ -134,12 +134,37 @@ export const cloudSet = (key: string, value: string): Promise<void> =>
     try { tg.CloudStorage.setItem(key, value, () => resolve()); } catch { resolve(); }
   });
 
-// Адмін-токен для запису з браузера (поза Telegram) — зберігається локально.
-// Спільний ключ: App.tsx (запити) і ProductPage.tsx (опис/знижка) чистять його
-// однаково при 401 (невалідний токен), щоб наступний адмін-тап одразу перепитав новий.
+// Адмін-токен: localStorage — швидкий локальний кеш (синхронний, читає adminAuth()),
+// Telegram CloudStorage — НАДІЙНЕ джерело (переживає стирання WebView-сховища між
+// відкриттями Mini App через посилання-кнопку поста — типова причина «токен злітає»/
+// «треба вводити щоразу», бо це не «справжня» web_app-сесія з постійним сховищем).
+const CLOUD_ADMIN_TOKEN_KEY = 'admin_token';
 export const ADMIN_TOKEN_KEY = 'tg-shop-admin-token';
+
 export const clearAdminToken = (): void => {
   try { localStorage.removeItem(ADMIN_TOKEN_KEY); } catch { /* private mode */ }
+  void cloudSet(CLOUD_ADMIN_TOKEN_KEY, '');
+};
+
+// Записати токен в ОБИДВА сховища (локальне — миттєво синхронно, хмарне — best-effort)
+export const saveAdminTokenEverywhere = (token: string): void => {
+  try { localStorage.setItem(ADMIN_TOKEN_KEY, token); } catch { /* private mode */ }
+  void cloudSet(CLOUD_ADMIN_TOKEN_KEY, token);
+};
+
+// Відновити токен з хмари в локальний кеш, якщо локальний порожній (типово — після
+// того, як Telegram стер WebView-сховище між відкриттями). Викликати раз при старті.
+// Повертає true, якщо токен реально підхопився з хмари (щоб можна було одразу
+// повторити дію, яка встигла відкрити модалку до завершення цього запиту).
+export const hydrateAdminTokenFromCloud = async (): Promise<boolean> => {
+  if (!cloudStorageAvailable()) return false;
+  try {
+    if (localStorage.getItem(ADMIN_TOKEN_KEY)) return false;   // локальний вже є — не чіпаємо
+  } catch { /* private mode */ }
+  const cloud = await cloudGet(CLOUD_ADMIN_TOKEN_KEY);
+  if (!cloud) return false;
+  try { localStorage.setItem(ADMIN_TOKEN_KEY, cloud); } catch { /* private mode */ }
+  return true;
 };
 
 export const contactPhone = (phone: string): void => openExternal(`tel:${phone.replace(/\s/g, '')}`);
