@@ -1,5 +1,4 @@
 // Картка товару в сітці каталогу
-import type { PointerEvent as ReactPointerEvent } from 'react';
 import { CatalogItem, discountPct, formatPrice, formatSeason } from '../api';
 
 // priority — для перших видимих карток (above the fold): вантажимо одразу й
@@ -12,8 +11,7 @@ type Props = {
   admin?: boolean;
   onTogglePublish?: (item: CatalogItem) => void;
   onToggleFeatured?: (item: CatalogItem) => void;   // тумблер «Рекомендований» (адмін)
-  onFeatDragStart?: (item: CatalogItem, e: ReactPointerEvent) => void;   // початок перетягування
-  dragging?: boolean;                       // цю картку зараз перетягують
+  onOpenReorder?: () => void;               // відкрити панель порядку рекомендованих (адмін)
   isFav?: boolean;                          // чи товар у «Обраному» користувача
   onToggleFav?: (item: CatalogItem) => void;
 };
@@ -26,7 +24,7 @@ const sizeLabel = (item: CatalogItem): string | null => {
   return null;
 };
 
-export const ProductCard = ({ item, onOpen, priority = false, admin = false, onTogglePublish, onToggleFeatured, onFeatDragStart, dragging = false, isFav = false, onToggleFav }: Props) => {
+export const ProductCard = ({ item, onOpen, priority = false, admin = false, onTogglePublish, onToggleFeatured, onOpenReorder, isFav = false, onToggleFav }: Props) => {
   const size = sizeLabel(item);
   const favCount = item.fav_count ?? 0;
   // Знижка: акційна ціна лише для вітрини (products.price не чіпаємо)
@@ -37,24 +35,20 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
   // «unlisted» (не в каталозі) бачить лише адмін — публіці неопубліковані не доходять
   const showFeatBadge = item.published && !onSale && item.featured;
   return (
-    <div className={`card-wrap${dragging ? ' dragging' : ''}`} data-pn={item.productnumber}>
+    <div className="card-wrap" data-pn={item.productnumber}>
     <button type="button" className={`card${item.published ? '' : ' unlisted'}`}
       onClick={() => onOpen(item.id)} aria-label={`Товар ${item.productnumber}`}>
       <div className="card-image">
         {!item.published && <span className="unlisted-badge">не в каталозі</span>}
         {item.published && onSale && <span className="sale-badge">−{discountPct(item.price, item.sale_price!)}%</span>}
         {/* Публіці — бейдж «Рекомендований»; адміну на рекомендованій — маленька
-            ручка ⠿ (лише перетягування порядку). Додати/прибрати — зірка (нижче). */}
+            ручка ⠿ (тап відкриває панель порядку). Додати/прибрати — зірка (нижче). */}
         {showFeatBadge && !admin && <span className="featured-badge">Рекомендований</span>}
-        {showFeatBadge && admin && onFeatDragStart && (
-          <span className="feat-grip" title="Перетягніть, щоб змінити порядок рекомендованих"
-            onPointerDown={(e) => {
-              e.stopPropagation();
-              (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-              onFeatDragStart(item, e);
-            }}>
+        {showFeatBadge && admin && onOpenReorder && (
+          <button type="button" className="feat-grip" title="Змінити порядок рекомендованих"
+            onClick={(e) => { e.stopPropagation(); onOpenReorder(); }}>
             <GripIcon />
-          </span>
+          </button>
         )}
         {/* «Обране» ♥️ — у кутку фото: тап додає/прибирає, поряд публічний лічильник */}
         {onToggleFav && (
