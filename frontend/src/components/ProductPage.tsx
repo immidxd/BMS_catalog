@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AdminAuth, ProductDetail, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
 import { parseTechnologies } from '../techLogos';
-import { clearAdminToken, contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
+import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
 
 type Props = {
   productId: number;
@@ -14,6 +14,8 @@ type Props = {
   // Авторизація адмін-запису. onAuthed — колбек: якщо токена ще нема (відкриється
   // модалка), він АВТОМАТИЧНО повторить дію одразу після введення токена.
   adminAuth?: (onAuthed?: () => void) => AdminAuth | null;
+  // 401 (токен був, але невалідний) — теж відкриває токен-модалку з retry, а не alert().
+  onAdminAuthFailure?: (hint: string, retry?: () => void) => void;
   sellerUsername: string;
   sellerPhone: string;
   sellerInstagram: string;
@@ -49,7 +51,7 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
 const cap = (s: string | null): string | null =>
   s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 
-export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, isFavorite, onToggleFav, adminAuth, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin = false, onBack }: Props) => {
+export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin = false, onBack }: Props) => {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [error, setError] = useState(false);
   const [slide, setSlide] = useState(0);
@@ -331,7 +333,7 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
         {/* Опис: адмін редагує текст і керує публічністю; публіка бачить опис лише
             якщо адмін зробив його публічним (бекенд віддає description тільки тоді). */}
         {admin && adminAuth ? (
-          <AdminDescription product={product} auth={adminAuth}
+          <AdminDescription product={product} auth={adminAuth} onAuthFailure={onAdminAuthFailure}
             onSaved={(patch) => setProduct((p) => p ? {
               ...p,
               ...(patch.description !== undefined ? { description: patch.description } : {}),
@@ -346,7 +348,7 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
 
         {/* Знижка — керує лише адмін (акційна ціна для вітрини, products.price недоторканий) */}
         {admin && adminAuth && (
-          <AdminDiscount product={product} auth={adminAuth}
+          <AdminDiscount product={product} auth={adminAuth} onAuthFailure={onAdminAuthFailure}
             onSaved={(r) => setProduct((p) => p ? { ...p, on_sale: r.is_on_sale, sale_price: r.sale_price } : p)} />
         )}
 
@@ -433,9 +435,10 @@ const HeartIcon = ({ filled }: { filled?: boolean }) => (
 
 // Адмін-редактор опису: текст (пишеться в products.description) + перемикач публічності.
 // Зміни — ті самі поля в БД, що бачить/редагує BMS.
-const AdminDescription = ({ product, auth, onSaved }: {
+const AdminDescription = ({ product, auth, onAuthFailure, onSaved }: {
   product: ProductDetail;
   auth: (onAuthed?: () => void) => AdminAuth | null;
+  onAuthFailure?: (hint: string, retry?: () => void) => void;
   onSaved: (patch: { description?: string | null; is_public?: boolean }) => void;
 }) => {
   const [text, setText] = useState(product.description ?? '');
@@ -458,9 +461,8 @@ const AdminDescription = ({ product, auth, onSaved }: {
       });
       haptic('light');
     } catch {
-      clearAdminToken();
-      haptic('medium');
-      alert('Не вдалося зберегти опис — перевірте адмін-токен (спробуйте ще раз).');
+      // Токен був, але сервер відхилив (401) — токен-модалка з retry, а не мертвий alert()
+      onAuthFailure?.('Не вдалося зберегти опис — перевірте адмін-токен.', () => save(patch));
     } finally {
       setSaving(false);
     }
@@ -492,9 +494,10 @@ const AdminDescription = ({ product, auth, onSaved }: {
 };
 
 // Адмін-контрол знижки: акційна ціна ЛИШЕ для вітрини (products.price не чіпаємо).
-const AdminDiscount = ({ product, auth, onSaved }: {
+const AdminDiscount = ({ product, auth, onAuthFailure, onSaved }: {
   product: ProductDetail;
   auth: (onAuthed?: () => void) => AdminAuth | null;
+  onAuthFailure?: (hint: string, retry?: () => void) => void;
   onSaved: (r: { sale_price: number | null; is_on_sale: boolean }) => void;
 }) => {
   const [price, setPrice] = useState(product.sale_price != null ? String(product.sale_price) : '');
@@ -519,9 +522,7 @@ const AdminDiscount = ({ product, auth, onSaved }: {
       onSaved(r);
       haptic('light');
     } catch {
-      clearAdminToken();
-      haptic('medium');
-      alert('Не вдалося зберегти знижку — перевірте адмін-токен (спробуйте ще раз).');
+      onAuthFailure?.('Не вдалося зберегти знижку — перевірте адмін-токен.', () => save(nextOn));
     } finally {
       setSaving(false);
     }
