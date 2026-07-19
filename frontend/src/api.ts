@@ -114,6 +114,7 @@ export type CatalogQuery = {
   min_price?: number;
   max_price?: number;
   favnums?: string[];         // «Обране»: показати лише ці номери товарів
+  on_sale?: boolean;          // чіп «Знижки»: показати лише товари з активною знижкою
   has_photo?: boolean;
   only_published?: boolean;   // публіка=true; адмін може вимкнути, щоб бачити весь пул
   // публіка=true (зливаємо дублі-завози в одну картку); адмін=false (кожен номер окремо)

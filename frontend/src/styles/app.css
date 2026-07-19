@@ -349,6 +349,9 @@ button {
 /* Чіп «Обране» у ряду швидких чіпів */
 .chip-fav svg { flex: none; }
 
+/* Чіп «Знижки %» — активний стан у кольорі знижки (той самий, що бейдж −X%) */
+.chip-sale.active { background: var(--danger); border-color: var(--danger); color: #fff; }
+
 /* Адмін-редактор опису */
 .desc-public-toggle {
   margin-left: 8px;

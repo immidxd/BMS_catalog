@@ -209,10 +209,19 @@ def _build_filters(
     has_photo: Optional[bool],
     only_published: bool = True,
     favnums: Optional[List[str]] = None,
+    on_sale: Optional[bool] = None,
 ) -> tuple[str, Dict[str, Any]]:
     """Збирає додаткові WHERE-умови та параметри запиту."""
     conditions: List[str] = []
     params: Dict[str, Any] = {}
+
+    # Чіп «Знижки»: лише товари з активною й валідною знижкою (та ж умова, що
+    # й у display-гейті нижче — 0 < sale_price < price, is_on_sale = TRUE).
+    if on_sale:
+        conditions.append(
+            "COALESCE(cl.is_on_sale, FALSE) = TRUE AND cl.sale_price IS NOT NULL "
+            "AND cl.sale_price > 0 AND cl.sale_price < p.price"
+        )
 
     # «Обране»: показуємо лише товари з набору номерів користувача. Порожній/невалідний
     # набір → свідомо нічого не показуємо (фронт покаже «ви ще не маєте обраного»).
@@ -377,6 +386,8 @@ async def get_catalog(
     only_published: bool = Query(True),
     # «Обране»: набір номерів користувача (фронт передає свій список). None — без фільтра.
     favnums: Optional[List[str]] = Query(None),
+    # Чіп «Знижки»: лише товари з активною знижкою
+    on_sale: Optional[bool] = Query(None),
     # Публічна вітрина (True): різні номери ідентичного товару зливаються в одну
     # картку. Адмін (False): кожен номер окремо — для поштучного керування.
     group_offers: bool = Query(True),
@@ -394,7 +405,7 @@ async def get_catalog(
     where_sql, params = _build_filters(
         search, typeids, subtypeids, brandids, genderids, color_group_ids,
         conditionids, seasons, eu_sizes, size_letters,
-        min_price, max_price, min_cm, max_cm, has_photo, only_published, favnums,
+        min_price, max_price, min_cm, max_cm, has_photo, only_published, favnums, on_sale,
     )
 
     base_sql = f"{_FULL_JOINS} WHERE {_AVAILABLE_WHERE} {where_sql}"
@@ -680,6 +691,7 @@ async def get_facets(
     max_cm: Optional[float] = Query(None),
     has_photo: bool = Query(True),
     only_published: bool = Query(True),
+    on_sale: Optional[bool] = Query(None),
     db: Session = Depends(get_db),
 ):
     """Динамічні фасети: EU-розміри, стать, кольорові групи — наявні в поточному
@@ -696,7 +708,7 @@ async def get_facets(
             conditionids, seasons,
             None if skip == "size" else eu_sizes,
             None if skip == "size" else size_letters,
-            min_price, max_price, min_cm, max_cm, has_photo, only_published,
+            min_price, max_price, min_cm, max_cm, has_photo, only_published, None, on_sale,
         )
 
     # — Розмір: EU + буквений (виключаємо власний розмірний фільтр) —
