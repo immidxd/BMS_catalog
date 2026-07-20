@@ -75,9 +75,17 @@ def _ensure_favorites_table(db: Session) -> None:
     db.commit()
 
 
+# ALTER TABLE потребує AccessExclusiveLock. Якщо саме зараз іде cloud-sync (він тримає
+# довгу читальну транзакцію на catalog_listings), ALTER стає в чергу — і БЛОКУЄ всі
+# наступні запити каталогу (нові читачі шикуються за ним). Тому обмежуємо очікування:
+# не дочекались — тихо пропускаємо (колонки вже є після першого разу), каталог живий.
+_ENSURE_LOCK_TIMEOUT = "SET LOCAL lock_timeout = '2s'"
+
+
 def _ensure_description_public_column(db: Session) -> None:
     """Прапорець публічності опису — адитивна колонка в catalog_listings
     (за замовч. FALSE: опис лишається приватним, поки адмін не відкриє явно)."""
+    db.execute(text(_ENSURE_LOCK_TIMEOUT))
     db.execute(text(
         "ALTER TABLE catalog_listings ADD COLUMN IF NOT EXISTS "
         "is_description_public boolean NOT NULL DEFAULT FALSE"
@@ -89,6 +97,7 @@ def _ensure_discount_columns(db: Session) -> None:
     """Знижка — адитивні колонки в catalog_listings. sale_price — АКЦІЙНА ціна ЛИШЕ
     для вітрини (products.price НЕ чіпаємо → Prom/OLX/облік з реальною ціною).
     is_on_sale — чи показувати знижку (щоб не будь-яка ціна ставала «акцією»)."""
+    db.execute(text(_ENSURE_LOCK_TIMEOUT))
     db.execute(text(
         "ALTER TABLE catalog_listings ADD COLUMN IF NOT EXISTS sale_price numeric"
     ))
@@ -102,6 +111,7 @@ def _ensure_discount_columns(db: Session) -> None:
 def _ensure_featured_order_column(db: Session) -> None:
     """Порядок рекомендованих товарів у вітрині (адмін перетягує). Менше = вище.
     Адитивна колонка; впливає ЛИШЕ на сортування рекомендованих у сітці «Новинки»."""
+    db.execute(text(_ENSURE_LOCK_TIMEOUT))
     db.execute(text(
         "ALTER TABLE catalog_listings ADD COLUMN IF NOT EXISTS featured_order integer"
     ))

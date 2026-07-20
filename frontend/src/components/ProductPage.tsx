@@ -89,23 +89,33 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
   useEffect(() => {
     const el = pageRef.current;
     if (!el) return;
-    let x0 = 0, y0 = 0, inGallery = false, active = false;
+    let x0 = 0, y0 = 0, inGallery = false, active = false, atStart = true, atEnd = true;
     const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
       x0 = t.clientX; y0 = t.clientY; active = true;
       // Галерея перехоплює свайп ЛИШЕ коли є що гортати (≥2 фото). За одного фото
       // свайп по фото теж гортає ТОВАРИ (інакше на фото «нічого не відбувається»).
       inGallery = !!(e.target as HTMLElement)?.closest?.('.gallery') && galleryImgCountRef.current > 1;
+      // Чи галерея вже на краю ДО жесту — щоб «дотяг» за останнє/перше фото
+      // гортав ТОВАРИ (як у великих магазинах), а не впирався в кінець стрічки.
+      const tr = trackRef.current;
+      atStart = !tr || tr.scrollLeft <= 2;
+      atEnd = !tr || tr.scrollLeft >= tr.scrollWidth - tr.clientWidth - 2;
     };
     const onEnd = (e: TouchEvent) => {
-      if (!active || inGallery) { active = false; return; }
+      if (!active) { return; }
       active = false;
       const t = e.changedTouches[0];
       const dx = t.clientX - x0, dy = t.clientY - y0;
       // Впевнено горизонтальний жест (не вертикальний скрол) і достатньої довжини
-      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) {
-        goSibling(dx < 0 ? 1 : -1);   // свайп вліво → наступна, вправо → попередня
+      if (!(Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6)) return;
+      if (inGallery) {
+        // Усередині галереї гортаємо ТОВАР лише коли фото в цьому напрямку скінчились
+        if (dx < 0 && atEnd) goSibling(1);
+        else if (dx > 0 && atStart) goSibling(-1);
+        return;
       }
+      goSibling(dx < 0 ? 1 : -1);   // свайп вліво → наступна, вправо → попередня
     };
     el.addEventListener('touchstart', onStart, { passive: true });
     el.addEventListener('touchend', onEnd, { passive: true });
