@@ -58,6 +58,7 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
   const [copied, setCopied] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);   // сама картка — її рухаємо під час свайпу
   const galleryImgCountRef = useRef(0);   // к-сть фото поточної картки (для логіки свайпу)
 
   // Сусідні картки в поточному порядку каталогу (для гортання свайпом/стрілками)
@@ -90,9 +91,23 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
     const el = pageRef.current;
     if (!el) return;
     let x0 = 0, y0 = 0, inGallery = false, active = false, atStart = true, atEnd = true;
+    let mode: 'undecided' | 'drag' | 'ignore' = 'undecided';
+    let dx = 0;
+    const EASE = 'transform .26s cubic-bezier(.22,.61,.36,1), opacity .26s ease';
+
+    // Рухаємо саму картку. animate=false — миттєво (слідування за пальцем).
+    const setX = (x: number, animate = false) => {
+      const s = sheetRef.current;
+      if (!s) return;
+      s.style.transition = animate ? EASE : 'none';
+      s.style.transform = x ? `translate3d(${x}px,0,0)` : '';
+      // Легке згасання під час відведення — відчуття «картка йде»
+      s.style.opacity = x ? String(Math.max(0.5, 1 - Math.abs(x) / (window.innerWidth * 1.1))) : '';
+    };
+
     const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
-      x0 = t.clientX; y0 = t.clientY; active = true;
+      x0 = t.clientX; y0 = t.clientY; active = true; mode = 'undecided'; dx = 0;
       // Галерея перехоплює свайп ЛИШЕ коли є що гортати (≥2 фото). За одного фото
       // свайп по фото теж гортає ТОВАРИ (інакше на фото «нічого не відбувається»).
       inGallery = !!(e.target as HTMLElement)?.closest?.('.gallery') && galleryImgCountRef.current > 1;
@@ -102,26 +117,63 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
       atStart = !tr || tr.scrollLeft <= 2;
       atEnd = !tr || tr.scrollLeft >= tr.scrollWidth - tr.clientWidth - 2;
     };
-    const onEnd = (e: TouchEvent) => {
-      if (!active) { return; }
-      active = false;
-      const t = e.changedTouches[0];
-      const dx = t.clientX - x0, dy = t.clientY - y0;
-      // Впевнено горизонтальний жест (не вертикальний скрол) і достатньої довжини
-      if (!(Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6)) return;
-      if (inGallery) {
-        // Усередині галереї гортаємо ТОВАР лише коли фото в цьому напрямку скінчились
-        if (dx < 0 && atEnd) goSibling(1);
-        else if (dx > 0 && atStart) goSibling(-1);
-        return;
+
+    const onMove = (e: TouchEvent) => {
+      if (!active) return;
+      const t = e.touches[0];
+      const ddx = t.clientX - x0, ddy = t.clientY - y0;
+      if (mode === 'undecided') {
+        if (Math.abs(ddx) < 8 && Math.abs(ddy) < 8) return;   // ще замало руху — не вирішуємо
+        // Горизонтальний намір + чи взагалі дозволено тягти (галерея має бути на краю)
+        const horizontal = Math.abs(ddx) > Math.abs(ddy) * 1.2;
+        const allowed = !inGallery || (ddx < 0 ? atEnd : atStart);
+        mode = horizontal && allowed ? 'drag' : 'ignore';
       }
-      goSibling(dx < 0 ? 1 : -1);   // свайп вліво → наступна, вправо → попередня
+      if (mode !== 'drag') return;
+      // Якщо в цей бік товарів немає — сильний опір (гумка), щоб було видно межу
+      const target = ddx < 0 ? nextId : prevId;
+      dx = target == null ? ddx * 0.22 : ddx;
+      setX(dx);
     };
+
+    const onEnd = () => {
+      if (!active) return;
+      active = false;
+      if (mode !== 'drag') { mode = 'undecided'; return; }
+      mode = 'undecided';
+      const target = dx < 0 ? nextId : prevId;
+      if (Math.abs(dx) > 60 && target != null) {
+        const dir: -1 | 1 = dx < 0 ? 1 : -1;
+        const w = window.innerWidth;
+        setX(dir === 1 ? -w : w, true);          // поточна картка виїжджає
+        window.setTimeout(() => {
+          goSibling(dir);                         // перемикаємо товар
+          setX(dir === 1 ? w : -w);               // ставимо нову з протилежного боку
+          // Форсуємо перерахунок, щоб браузер зафіксував стартову позицію ДО переходу
+          // (надійніше за requestAnimationFrame — з ним картка інколи застрягала збоку).
+          void sheetRef.current?.offsetWidth;
+          setX(0, true);                          // і плавно вводимо на місце
+        }, 210);
+      } else {
+        setX(0, true);   // не дотягнув — пружиною назад
+      }
+      dx = 0;
+    };
+
     el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: true });
     el.addEventListener('touchend', onEnd, { passive: true });
+    el.addEventListener('touchcancel', onEnd, { passive: true });
     return () => {
       el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
       el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+      // Страховка: ніколи не лишаємо картку зсунутою/напівпрозорою після розмонтування
+      const s = sheetRef.current;
+      if (s && !s.style.transition.includes('transform')) {
+        s.style.transform = ''; s.style.opacity = '';
+      }
     };
     // product?.id ОБОВ'ЯЗКОВО в залежностях: доки товар вантажиться, рендериться інший
     // .product-page (заглушка) БЕЗ ref → pageRef.current === null і слухачі не чіпляються.
@@ -265,7 +317,7 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
     <div className="product-page" ref={pageRef} onClick={handleBackdrop}>
       {!isInTelegram && <button type="button" className="back-fab" onClick={onBack} aria-label="Назад">←</button>}
 
-      <div className="product-sheet">
+      <div className="product-sheet" ref={sheetRef}>
       <div className="gallery">
         {/* Номер товару — мінімалістично в кутку, клік копіює в буфер */}
         <button type="button" className="number-pill" onClick={handleCopyNumber}

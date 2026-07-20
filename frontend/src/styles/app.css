@@ -1212,6 +1212,10 @@ button {
 }
 .tech-logo { height: 16px; width: auto; max-width: 60px; object-fit: contain; display: block; }
 
+/* Картка товару рухається під час свайпу між товарами — підказка браузеру для
+   плавної анімації на GPU (transform/opacity задає JS у ProductPage). */
+.product-sheet { will-change: transform; }
+
 /* Закріплена панель зв'язку з продавцем (мульти-канал: Telegram + телефон + Instagram) */
 .contact-bar {
   position: fixed;
