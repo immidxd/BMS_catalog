@@ -123,7 +123,11 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
       el.removeEventListener('touchstart', onStart);
       el.removeEventListener('touchend', onEnd);
     };
-  }, [prevId, nextId, idx, siblingIds.length]);
+    // product?.id ОБОВ'ЯЗКОВО в залежностях: доки товар вантажиться, рендериться інший
+    // .product-page (заглушка) БЕЗ ref → pageRef.current === null і слухачі не чіпляються.
+    // Без цієї залежності ефект більше не перезапускався, і на щойно відкритій картці
+    // свайп не працював зовсім (перечіплявся лише після переходу стрілкою).
+  }, [prevId, nextId, idx, siblingIds.length, product?.id]);
 
   // Клік по затемненому фону (поза карткою) на десктопі — закрити
   const handleBackdrop = (e: React.MouseEvent) => { if (e.target === e.currentTarget) onBack(); };
