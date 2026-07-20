@@ -225,12 +225,14 @@ def _build_filters(
     conditions: List[str] = []
     params: Dict[str, Any] = {}
 
-    # Чіп «Знижки»: лише товари з активною й валідною знижкою (та ж умова, що
-    # й у display-гейті нижче — 0 < sale_price < price, is_on_sale = TRUE).
+    # Чіп «Знижки»: будь-яка ЗНИЖЕНА ціна — двома шляхами (та ж умова, що й у
+    # display-гейті): (1) акційна ціна каталогу (is_on_sale + 0 < sale_price < price);
+    # (2) «стара» знижка — у товарі вже стоїть oldprice > price (ціну скинуто в BMS).
     if on_sale:
         conditions.append(
-            "COALESCE(cl.is_on_sale, FALSE) = TRUE AND cl.sale_price IS NOT NULL "
-            "AND cl.sale_price > 0 AND cl.sale_price < p.price"
+            "((COALESCE(cl.is_on_sale, FALSE) = TRUE AND cl.sale_price IS NOT NULL "
+            "  AND cl.sale_price > 0 AND cl.sale_price < p.price) "
+            " OR (p.oldprice IS NOT NULL AND p.oldprice > p.price))"
         )
 
     # «Обране»: показуємо лише товари з набору номерів користувача. Порожній/невалідний
@@ -498,9 +500,13 @@ async def get_catalog(
             "image": image,
             "featured": r["featured"],
             "published": r["published"],   # для адмін-сітки (бачить пул і що ввімкнено)
-            # Знижка (акційна ціна ЛИШЕ для вітрини): фронт покаже −X% і закреслить оригінал.
-            "on_sale": bool(r["on_sale"]) and r["sale_price"] is not None
-                        and float(r["sale_price"]) > 0 and float(r["sale_price"]) < float(r["price"]),
+            # Знижка: акційна ціна каталогу АБО «стара» знижена ціна (oldprice > price).
+            # Фронт за цими полями сам покаже −X% і закреслить початкову ціну.
+            "on_sale": (
+                (bool(r["on_sale"]) and r["sale_price"] is not None
+                 and 0 < float(r["sale_price"]) < float(r["price"]))
+                or (r["oldprice"] is not None and float(r["oldprice"]) > float(r["price"]))
+            ),
             "sale_price": float(r["sale_price"]) if r["sale_price"] is not None else None,
         })
 
@@ -921,10 +927,14 @@ async def get_catalog_product(
     if only_published and not row["description_public"]:
         out["description"] = None
 
-    # Знижка (акційна ціна лише для вітрини): валідна, коли ввімкнено й 0 < sale < price
+    # Знижка: акційна ціна каталогу (валідна, коли ввімкнено й 0 < sale < price) АБО
+    # «стара» знижена ціна (oldprice > price — ціну вже скинуто в BMS).
     sale = float(row["sale_price"]) if row["sale_price"] is not None else None
     out["sale_price"] = sale
-    out["on_sale"] = bool(row["on_sale"]) and sale is not None and 0 < sale < float(row["price"])
+    out["on_sale"] = (
+        (bool(row["on_sale"]) and sale is not None and 0 < sale < float(row["price"]))
+        or (row["oldprice"] is not None and float(row["oldprice"]) > float(row["price"]))
+    )
 
     # Лічильник «Обране» (♥️) — публічний
     fav_count = 0

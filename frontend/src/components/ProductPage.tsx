@@ -249,11 +249,13 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
 
   galleryImgCountRef.current = product.images.length;   // для логіки свайпу (див. вище)
 
-  // Знижка: акційна ціна лише для вітрини (products.price не чіпаємо)
-  const onSale = !!product.on_sale && product.sale_price != null;
-  const shownPrice = onSale ? product.sale_price! : product.price;
-  const priceOriginal = onSale ? product.price
-    : (product.oldprice && product.oldprice > product.price ? product.oldprice : null);
+  // Знижка — ДВА джерела: акційна ціна каталогу (sale_price) АБО «стара» знижена
+  // ціна (oldprice > price, скинуто в BMS). Обидві дають −X% і закреслений оригінал.
+  const catalogSale = product.sale_price != null && product.sale_price < product.price;
+  const legacySale = !catalogSale && product.oldprice != null && product.oldprice > product.price;
+  const onSale = catalogSale || legacySale;
+  const shownPrice = catalogSale ? product.sale_price! : product.price;
+  const priceOriginal = catalogSale ? product.price : (legacySale ? product.oldprice! : null);
 
   return (
     <div className="product-page" ref={pageRef} onClick={handleBackdrop}>
@@ -301,7 +303,7 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
           <div className="price-row">
             <span className={`price product-price${onSale ? ' sale' : ''}`}>{formatPrice(shownPrice)}</span>
             {priceOriginal && <span className="price-old">{formatPrice(priceOriginal)}</span>}
-            {onSale && <span className="sale-badge inline">−{discountPct(product.price, product.sale_price!)}%</span>}
+            {onSale && priceOriginal && <span className="sale-badge inline">−{discountPct(priceOriginal, shownPrice)}%</span>}
           </div>
           <div className="meta-line">
             {onToggleFav && (

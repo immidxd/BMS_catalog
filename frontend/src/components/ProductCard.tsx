@@ -27,11 +27,14 @@ const sizeLabel = (item: CatalogItem): string | null => {
 export const ProductCard = ({ item, onOpen, priority = false, admin = false, onTogglePublish, onToggleFeatured, onOpenReorder, isFav = false, onToggleFav }: Props) => {
   const size = sizeLabel(item);
   const favCount = item.fav_count ?? 0;
-  // Знижка: акційна ціна лише для вітрини (products.price не чіпаємо)
-  const onSale = !!item.on_sale && item.sale_price != null;
-  const shownPrice = onSale ? item.sale_price! : item.price;
-  const original = onSale ? item.price
-    : (item.oldprice && item.oldprice > item.price ? item.oldprice : null);
+  // Знижка — ДВА джерела: акційна ціна каталогу (sale_price, products.price не чіпаємо)
+  // АБО «стара» знижена ціна (oldprice > price, ціну вже скинуто в BMS). Обидві дають
+  // бейдж −X% і закреслений оригінал.
+  const catalogSale = item.sale_price != null && item.sale_price < item.price;
+  const legacySale = !catalogSale && item.oldprice != null && item.oldprice > item.price;
+  const onSale = catalogSale || legacySale;
+  const shownPrice = catalogSale ? item.sale_price! : item.price;
+  const original = catalogSale ? item.price : (legacySale ? item.oldprice! : null);
   // «unlisted» (не в каталозі) бачить лише адмін — публіці неопубліковані не доходять
   const showFeatBadge = item.published && !onSale && item.featured;
   return (
@@ -40,7 +43,7 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
       onClick={() => onOpen(item.id)} aria-label={`Товар ${item.productnumber}`}>
       <div className="card-image">
         {!item.published && <span className="unlisted-badge">не в каталозі</span>}
-        {item.published && onSale && <span className="sale-badge">−{discountPct(item.price, item.sale_price!)}%</span>}
+        {item.published && onSale && original && <span className="sale-badge">−{discountPct(original, shownPrice)}%</span>}
         {/* Публіці — бейдж «Рекомендований»; адміну на рекомендованій — маленька
             ручка ⠿ (тап відкриває панель порядку). Додати/прибрати — зірка (нижче). */}
         {showFeatBadge && !admin && <span className="featured-badge">Рекомендований</span>}
