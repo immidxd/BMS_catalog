@@ -85,6 +85,18 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
     return () => window.removeEventListener('keydown', onKey);
   }, [onBack, prevId, nextId]);
 
+  // Заздалегідь підвантажуємо дані й перше фото сусідніх карток — щоб свайп
+  // (готовий, коли до нього доходить палець) не «блимав» очікуванням мережі.
+  useEffect(() => {
+    [prevId, nextId].forEach((sid) => {
+      if (sid == null) return;
+      fetchProduct(sid, admin).then((p) => {
+        const url = p.images[0]?.url;
+        if (url) new Image().src = url;
+      }).catch(() => {});
+    });
+  }, [prevId, nextId, admin]);
+
   // Свайп між картками: горизонтальний жест ПОЗА галереєю (галерея ловить свій
   // свайп фото). Розмежовуємо за початковою точкою дотику й домінантою осі X.
   useEffect(() => {
@@ -96,13 +108,23 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
     const EASE = 'transform .26s cubic-bezier(.22,.61,.36,1), opacity .26s ease';
 
     // Рухаємо саму картку. animate=false — миттєво (слідування за пальцем).
+    // will-change вмикаємо лише на час руху/анімації (не статично в CSS!) — інакше
+    // він створює containing block для position:fixed .contact-bar/.back-fab, і
+    // панель «Замовити» прилипає до низу КАРТКИ замість viewport (обрізає контент).
+    // Вимикається по transitionend нижче, коли картка остаточно стала на місце.
     const setX = (x: number, animate = false) => {
       const s = sheetRef.current;
       if (!s) return;
+      s.style.willChange = 'transform';
       s.style.transition = animate ? EASE : 'none';
       s.style.transform = x ? `translate3d(${x}px,0,0)` : '';
       // Легке згасання під час відведення — відчуття «картка йде»
       s.style.opacity = x ? String(Math.max(0.5, 1 - Math.abs(x) / (window.innerWidth * 1.1))) : '';
+    };
+    const onTransitionEnd = (e: TransitionEvent) => {
+      if (e.propertyName === 'transform' && sheetRef.current?.style.transform === '') {
+        sheetRef.current.style.willChange = 'auto';
+      }
     };
 
     const onStart = (e: TouchEvent) => {
@@ -164,15 +186,17 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
     el.addEventListener('touchmove', onMove, { passive: true });
     el.addEventListener('touchend', onEnd, { passive: true });
     el.addEventListener('touchcancel', onEnd, { passive: true });
+    sheetRef.current?.addEventListener('transitionend', onTransitionEnd);
     return () => {
       el.removeEventListener('touchstart', onStart);
       el.removeEventListener('touchmove', onMove);
       el.removeEventListener('touchend', onEnd);
       el.removeEventListener('touchcancel', onEnd);
+      sheetRef.current?.removeEventListener('transitionend', onTransitionEnd);
       // Страховка: ніколи не лишаємо картку зсунутою/напівпрозорою після розмонтування
       const s = sheetRef.current;
       if (s && !s.style.transition.includes('transform')) {
-        s.style.transform = ''; s.style.opacity = '';
+        s.style.transform = ''; s.style.opacity = ''; s.style.willChange = 'auto';
       }
     };
     // product?.id ОБОВ'ЯЗКОВО в залежностях: доки товар вантажиться, рендериться інший

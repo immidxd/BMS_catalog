@@ -162,8 +162,20 @@ export const fetchFacets = (query: CatalogQuery): Promise<Facets> =>
 
 // admin=true → дозволяє відкрити деталь ЩЕ НЕ опублікованого товару (для модерації);
 // інакше неопублікований → 404 (публіці не доступний).
-export const fetchProduct = (id: number, admin = false): Promise<ProductDetail> =>
-  fetchJson(`/api/catalog/${id}${admin ? '?only_published=false&group_offers=false' : ''}`);
+// Кешується за (id, admin): ProductPage заздалегідь підвантажує сусідні картки
+// (свайп-навігація), щоб перехід був миттєвим — без «блимання» старими даними,
+// поки вантажиться нова картка.
+const productCache = new Map<string, Promise<ProductDetail>>();
+export const fetchProduct = (id: number, admin = false): Promise<ProductDetail> => {
+  const key = `${id}:${admin}`;
+  let p = productCache.get(key);
+  if (!p) {
+    p = fetchJson<ProductDetail>(`/api/catalog/${id}${admin ? '?only_published=false&group_offers=false' : ''}`);
+    p.catch(() => productCache.delete(key));   // не кешувати помилку — можна повторити
+    productCache.set(key, p);
+  }
+  return p;
+};
 
 // Мапа {productnumber: перегляди} — для «живого» оновлення адмін-бейджів (полінг)
 export const fetchViews = (): Promise<Record<string, number>> =>
