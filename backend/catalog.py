@@ -26,8 +26,13 @@ router = APIRouter()
 # екошкіри/штучної/шкірзаму/вже-натуральної. Стан «Хороший» → «Хороший / Сток».
 _MAT_ABBR = {"eva": "EVA", "ева": "EVA", "эва": "EVA", "pu": "PU", "пу": "PU",
              "tpu": "TPU", "тпу": "TPU", "tpr": "TPR", "тпр": "TPR", "pvc": "PVC",
-             "пвх": "PVC", "abs": "ABS", "pp": "PP", "eтпу": "ETPU", "etpu": "ETPU"}
-_ABBR_RE = re.compile(r"\b(eva|ева|эва|pu|пу|tpu|тпу|tpr|тпр|pvc|пвх|abs|pp|etpu|eтпу)\b", re.I)
+             "пвх": "PVC", "abs": "ABS", "pp": "PP", "eтпу": "ETPU", "etpu": "ETPU",
+             # CMEVA/IMEVA — формовані різновиди EVA; це теж абревіатури, тому
+             # ВЕЛИКИМИ. Окремі альтернативи потрібні, бо \b не дає «eva» матчитись
+             # усередині «cmeva» (перед ним літера m), і слово лишалось «Cmeva».
+             "cmeva": "CMEVA", "смева": "CMEVA", "imeva": "IMEVA"}
+_ABBR_RE = re.compile(
+    r"\b(cmeva|смева|imeva|etpu|eтпу|eva|ева|эва|tpu|тпу|tpr|тпр|pvc|пвх|abs|pu|пу|pp)\b", re.I)
 
 
 def _display_material(name: str) -> str:

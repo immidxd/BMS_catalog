@@ -41,6 +41,13 @@ const KNOWN: Record<string, Tech> = {
   'engineered mesh': { label: 'Engineered Mesh', slug: 'engineered-mesh' },
   'luxe foam': { label: 'Luxe Foam', slug: 'luxe-foam' },
   'goga mat': { label: 'Goga Mat', slug: 'goga-mat' },
+  // Абревіатури-матеріали, що трапляються і як «технологія» — завжди ВЕЛИКИМИ.
+  // Без цього titleCase зробив би з «cmeva» → «Cmeva» (великі виживали лише тому,
+  // що в БД вони вже великими — на це не покладаємось).
+  'cmeva': { label: 'CMEVA', slug: 'cmeva' },
+  'imeva': { label: 'IMEVA', slug: 'imeva' },
+  'eva': { label: 'EVA', slug: 'eva' },
+  'tpu': { label: 'TPU', slug: 'tpu' },
 };
 
 // Слаг для невідомого токена: латиниця/цифри → дефіси (для можливого лого користувача)
