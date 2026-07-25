@@ -1,4 +1,5 @@
 // Картка товару в сітці каталогу
+import { useEffect, useState } from 'react';
 import { CatalogItem, discountPct, formatPrice, formatSeason } from '../api';
 
 // priority — для перших видимих карток (above the fold): вантажимо одразу й
@@ -27,6 +28,17 @@ const sizeLabel = (item: CatalogItem): string | null => {
 export const ProductCard = ({ item, onOpen, priority = false, admin = false, onTogglePublish, onToggleFeatured, onOpenReorder, isFav = false, onToggleFav }: Props) => {
   const size = sizeLabel(item);
   const favCount = item.fav_count ?? 0;
+  // Ключ спалаху ♥️ (0 = немає). Змінюємо число, щоб CSS-анімація перезапускалась
+  // навіть при швидких повторних тапах.
+  const [burst, setBurst] = useState(0);
+  // Знімаємо спалах ТАЙМЕРОМ, а не по onAnimationEnd: якщо WebView у фоні (Telegram
+  // згорнули) або система просить «менше руху», анімація не йде і подія animationend
+  // не приходить — клас 'burst' залипав би назавжди й наступний «пух» не відтворився.
+  useEffect(() => {
+    if (!burst) return;
+    const t = setTimeout(() => setBurst(0), 700);   // трохи довше за анімацію (0.62с)
+    return () => clearTimeout(t);
+  }, [burst]);
   // Знижка — ДВА джерела: акційна ціна каталогу (sale_price, products.price не чіпаємо)
   // АБО «стара» знижена ціна (oldprice > price, ціну вже скинуто в BMS). Обидві дають
   // бейдж −X% і закреслений оригінал.
@@ -56,12 +68,22 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
         {/* «Обране» ♥️ — у кутку фото: тап додає/прибирає, поряд публічний лічильник */}
         {onToggleFav && (
           <button type="button"
-            className={`fav-btn${isFav ? ' on' : ''}`}
-            onClick={(e) => { e.stopPropagation(); onToggleFav(item); }}
+            className={`fav-btn${isFav ? ' on' : ''}${burst ? ' burst' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isFav) setBurst((n) => n + 1);   // спалах лише на ДОДАВАННЯ, не на зняття
+              onToggleFav(item);
+            }}
             aria-pressed={isFav}
             aria-label={isFav ? 'Прибрати з обраного' : 'Додати в обране'}>
             <HeartIcon filled={isFav} />
             {favCount > 0 && <span className="fav-count">{favCount}</span>}
+            {/* Серце, що вилітає вгору й тане (декор — прихований від скрінрідерів) */}
+            {burst > 0 && (
+              <span className="fav-burst" key={burst} aria-hidden="true">
+                <HeartIcon filled />
+              </span>
+            )}
           </button>
         )}
         {admin && (

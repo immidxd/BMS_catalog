@@ -66,6 +66,29 @@ button {
 
 .search-input input::placeholder { color: var(--fg-subtle); }
 
+/* Нативний хрестик WebKit ховаємо — маємо свій (однаковий у всіх темах/платформах) */
+.search-input input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
+/* Свій хрестик очищення: делікатний, з більшим клік-таргетом за розмір іконки */
+.search-clear {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: -4px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--fg-subtle);
+  cursor: pointer;
+  animation: fade-in var(--dur-fast) var(--ease);
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.search-clear:hover { color: var(--fg); background: var(--surface-alt); }
+.search-clear:active { transform: scale(0.9); }
+
 .icon-btn {
   display: flex;
   align-items: center;
@@ -325,6 +348,39 @@ button {
 .fav-btn:active { transform: scale(0.86); }
 .fav-btn.on { color: var(--danger); }
 .fav-btn .fav-count { color: #fff; }
+
+/* Додавання в «Обране»: пружний «пух» самої кнопки + серце, що вилітає вгору
+   й тане. Швидко (≈0.6с) і без стрибків розкладки — анімуємо лише transform/
+   opacity (GPU). Спалах живе в межах .card-image (overflow:hidden), тому летить
+   недалеко вгору й не «вилазить» за фото. */
+.fav-btn.burst { animation: fav-pop 0.4s cubic-bezier(0.34, 1.5, 0.64, 1); }
+@keyframes fav-pop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+.fav-burst {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  margin-bottom: 2px;
+  color: var(--danger);
+  pointer-events: none;
+  display: block;
+  animation: fav-fly 0.62s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+@keyframes fav-fly {
+  0%   { opacity: 0; transform: translate(-50%, 6px) scale(0.5); }
+  28%  { opacity: 1; transform: translate(-50%, -5px) scale(1.15); }
+  100% { opacity: 0; transform: translate(-50%, -30px) scale(0.9); }
+}
+
+/* Повага до системного «менше руху»: лишаємо результат без анімації */
+@media (prefers-reduced-motion: reduce) {
+  .fav-btn.burst { animation: none; }
+  .fav-burst { display: none; }
+}
 
 /* Рядок «Обране» на сторінці товару (для всіх) — біля переглядів */
 .meta-line { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-2); }
