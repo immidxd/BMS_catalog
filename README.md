@@ -17,7 +17,8 @@
 - Frontend: http://localhost:5173 (проксі `/api` та `/product-images` на backend)
 
 Перед запуском заповніть `.env` (див. ключі в наявному файлі): підключення до БД,
-папка фото `PRODUCT_IMAGES_DIR`, нік продавця `SELLER_TG_USERNAME`, назва `SHOP_NAME`.
+папка фото `PRODUCT_IMAGES_DIR`, нік продавця `SELLER_TG_USERNAME`, назва `SHOP_NAME`,
+канал магазину `TG_CHANNEL` (іконка в шапці; порожнє — кнопки немає).
 
 ## Збірка для продакшну
 

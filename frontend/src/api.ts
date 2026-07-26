@@ -183,7 +183,7 @@ export const fetchViews = (): Promise<Record<string, number>> =>
 
 export const fetchConfig = (): Promise<{
   seller_username: string; seller_phone: string; seller_instagram: string; seller_viber: string;
-  shop_name: string; admin_tg_ids: number[]; admin_writes: boolean;
+  tg_channel: string; shop_name: string; admin_tg_ids: number[]; admin_writes: boolean;
 }> => fetchJson('/api/config');
 
 // ── Адмін-запис публікації (Фаза 2) — захищений: Telegram initData АБО адмін-токен ──

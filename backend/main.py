@@ -43,6 +43,9 @@ async def get_config():
         "seller_phone": os.getenv("SELLER_PHONE", ""),
         "seller_instagram": os.getenv("SELLER_INSTAGRAM", "").lstrip("@"),
         "seller_viber": os.getenv("SELLER_VIBER", ""),   # номер для Viber-чату
+        # Публічний Telegram-канал магазину: приймаємо «нік», «@нік» або повне
+        # посилання — фронт отримує чистий нік (порожній — кнопки немає)
+        "tg_channel": os.getenv("TG_CHANNEL", "").strip().rstrip("/").rsplit("/", 1)[-1].lstrip("@"),
         "shop_name": os.getenv("SHOP_NAME", "Каталог"),
         "admin_tg_ids": admin_ids,
         # Чи доступний адмін-запис публікації (Фаза 2) — щоб фронт знав, чи показувати тумблер

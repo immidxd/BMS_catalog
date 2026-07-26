@@ -25,6 +25,9 @@ SELLER_PHONE=
 SELLER_INSTAGRAM=
 SELLER_VIBER=
 
+# Публічний канал магазину (нік, @нік або посилання) — іконка в шапці каталогу
+TG_CHANNEL=
+
 # Назва магазину (заголовок)
 SHOP_NAME=
 

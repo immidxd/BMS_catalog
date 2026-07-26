@@ -113,6 +113,13 @@ export const contactSeller = (username: string, productnumber: string): void => 
   else window.open(url, '_blank');
 };
 
+// Канал магазину — у Telegram відкривається нативно (без виходу з застосунку)
+export const openChannel = (handle: string): void => {
+  const url = `https://t.me/${handle}`;
+  if (isInTelegram) tg!.openTelegramLink(url);
+  else window.open(url, '_blank');
+};
+
 // Зовнішнє посилання (телефон/Instagram) — у Telegram через openLink, інакше нова вкладка
 export const openExternal = (url: string): void => {
   if (isInTelegram && tg!.openLink) tg!.openLink(url);

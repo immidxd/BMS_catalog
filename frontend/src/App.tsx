@@ -7,7 +7,7 @@ import { ProductCard, SkeletonCard } from './components/ProductCard';
 import { ProductPage } from './components/ProductPage';
 import { useCatalog, useDebounced } from './hooks/useCatalog';
 import { useFavorites } from './useFavorites';
-import { ADMIN_TOKEN_KEY, clearAdminToken, currentTheme, haptic, hapticSelect, hydrateAdminTokenFromCloud, initDataRaw, saveAdminTokenEverywhere, telegramUserId, toggleTheme } from './telegram';
+import { ADMIN_TOKEN_KEY, clearAdminToken, currentTheme, haptic, hapticSelect, hydrateAdminTokenFromCloud, initDataRaw, openChannel, saveAdminTokenEverywhere, telegramUserId, toggleTheme } from './telegram';
 
 // Адмін-режим (бачить тумблер «з фото» тощо): Telegram ID у allowlist або ?admin=1
 const hasAdminParam = new URLSearchParams(window.location.search).has('admin');
@@ -36,6 +36,7 @@ export const App = () => {
   const [sellerPhone, setSellerPhone] = useState('');
   const [sellerInstagram, setSellerInstagram] = useState('');
   const [sellerViber, setSellerViber] = useState('');
+  const [tgChannel, setTgChannel] = useState('');
   const [shopName, setShopName] = useState('Каталог');
   const [isAdmin, setIsAdmin] = useState(hasAdminParam);
   const [adminWrites, setAdminWrites] = useState(false);   // чи бекенд дозволяє адмін-запис
@@ -113,6 +114,7 @@ export const App = () => {
       setSellerPhone(config.seller_phone);
       setSellerInstagram(config.seller_instagram);
       setSellerViber(config.seller_viber);
+      setTgChannel(config.tg_channel || '');
       if (config.shop_name) {
         setShopName(config.shop_name);
         document.title = config.shop_name;
@@ -370,6 +372,14 @@ export const App = () => {
             <FilterIcon />
             {activeCount > 0 && <span className="badge">{activeCount}</span>}
           </button>
+          {/* Наш канал — делікатна ghost-кнопка поряд із темою (лише якщо задано TG_CHANNEL) */}
+          {tgChannel && (
+            <button type="button" className="channel-btn" title="Наш Telegram-канал"
+              aria-label="Наш Telegram-канал"
+              onClick={() => { haptic('light'); openChannel(tgChannel); }}>
+              <ChannelIcon />
+            </button>
+          )}
           <ThemeToggle />
         </div>
         <div className="chips-row">
@@ -557,6 +567,14 @@ const ResetIcon = () => (
 const ClearIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
     <path d="M6 6l12 12M18 6L6 18" />
+  </svg>
+);
+
+// Паперовий літачок — вхід у наш Telegram-канал (у стилі решти лінійних іконок)
+const ChannelIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M21.5 2.5 10.6 13.4" />
+    <path d="M21.5 2.5 14.6 21.5l-4-8.1-8.1-4 19.1-6.9z" />
   </svg>
 );
 
