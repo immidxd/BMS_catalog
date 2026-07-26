@@ -323,12 +323,14 @@ def _build_filters(
     if seasons:
         # season — multi-value рядок "Зима, Осінь"; матчимо кожен сезон окремо.
         season_parts = [f"p.season ILIKE :season_{i}" for i in range(len(seasons))]
-        # Всесезонний товар (напр. сумки/аксесуари) підходить під БУДЬ-ЯКИЙ обраний
-        # сезон — тож не зникає при фільтрі «Літо/Зима…» (як у профі-магазинах).
+        # ЧИСТО всесезонний товар (сумки/аксесуари — сезон рівно «Всесезон») підходить
+        # під БУДЬ-ЯКИЙ обраний сезон, тож не зникає при фільтрі «Літо/Зима…».
+        # А от товар із конкретними сезонами («Демі, Всесезон») матчиться ЛИШЕ за ними:
+        # інакше під «Літо» потрапляли демісезонні моделі — і в картці було видно «Демі».
         # Виняток: якщо явно обрано сам «Всесезон» — не дублюємо умову.
         if not any((s or "").strip().lower() == "всесезон" for s in seasons):
-            season_parts.append("p.season ILIKE :season_all")
-            params["season_all"] = "%Всесезон%"
+            # ILIKE, а не lower(): у цій БД lower() не згортає регістр кирилиці
+            season_parts.append("btrim(p.season) ILIKE 'Всесезон'")
         conditions.append(f"({' OR '.join(season_parts)})")
         for i, season in enumerate(seasons):
             params[f"season_{i}"] = f"%{season}%"
