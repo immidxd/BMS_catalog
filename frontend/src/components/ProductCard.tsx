@@ -56,10 +56,9 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
     <button type="button" className={`card${item.published ? '' : ' unlisted'}`}
       onClick={() => onOpen(item.id)} aria-label={`Товар ${item.productnumber}`}>
       <div className="card-image">
-        {/* Ряд бейджів у верхньому лівому куті: знижка + «Рекомендований» разом */}
+        {/* Ряд бейджів у верхньому лівому куті: спершу «Рекомендований», за ним знижка */}
         <div className={`card-badges${admin ? ' with-admin' : ''}`}>
           {!item.published && <span className="unlisted-badge">не в каталозі</span>}
-          {item.published && onSale && original && <span className="sale-badge">−{discountPct(original, shownPrice)}%</span>}
           {/* Публіці — бейдж «Рекомендований»; адміну на рекомендованій — маленька
               ручка ⠿ (тап відкриває панель порядку). Додати/прибрати — зірка (нижче). */}
           {showFeatBadge && !admin && <span className="featured-badge">Рекомендований</span>}
@@ -69,6 +68,7 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
               <GripIcon />
             </button>
           )}
+          {item.published && onSale && original && <span className="sale-badge">−{discountPct(original, shownPrice)}%</span>}
         </div>
         {/* «Обране» ♥️ — у кутку фото: тап додає/прибирає, поряд публічний лічильник */}
         {onToggleFav && (
