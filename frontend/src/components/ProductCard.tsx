@@ -48,23 +48,28 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
   const shownPrice = catalogSale ? item.sale_price! : item.price;
   const original = catalogSale ? item.price : (legacySale ? item.oldprice! : null);
   // «unlisted» (не в каталозі) бачить лише адмін — публіці неопубліковані не доходять
-  const showFeatBadge = item.published && !onSale && item.featured;
+  // «Рекомендований» і «−X%» НЕ конкурують: якщо товар і рекомендований, і зі знижкою —
+  // показуємо обидва бейджі поруч (у спільному ряду .card-badges).
+  const showFeatBadge = item.published && item.featured;
   return (
     <div className="card-wrap" data-pn={item.productnumber}>
     <button type="button" className={`card${item.published ? '' : ' unlisted'}`}
       onClick={() => onOpen(item.id)} aria-label={`Товар ${item.productnumber}`}>
       <div className="card-image">
-        {!item.published && <span className="unlisted-badge">не в каталозі</span>}
-        {item.published && onSale && original && <span className="sale-badge">−{discountPct(original, shownPrice)}%</span>}
-        {/* Публіці — бейдж «Рекомендований»; адміну на рекомендованій — маленька
-            ручка ⠿ (тап відкриває панель порядку). Додати/прибрати — зірка (нижче). */}
-        {showFeatBadge && !admin && <span className="featured-badge">Рекомендований</span>}
-        {showFeatBadge && admin && onOpenReorder && (
-          <button type="button" className="feat-grip" title="Змінити порядок рекомендованих"
-            onClick={(e) => { e.stopPropagation(); onOpenReorder(); }}>
-            <GripIcon />
-          </button>
-        )}
+        {/* Ряд бейджів у верхньому лівому куті: знижка + «Рекомендований» разом */}
+        <div className={`card-badges${admin ? ' with-admin' : ''}`}>
+          {!item.published && <span className="unlisted-badge">не в каталозі</span>}
+          {item.published && onSale && original && <span className="sale-badge">−{discountPct(original, shownPrice)}%</span>}
+          {/* Публіці — бейдж «Рекомендований»; адміну на рекомендованій — маленька
+              ручка ⠿ (тап відкриває панель порядку). Додати/прибрати — зірка (нижче). */}
+          {showFeatBadge && !admin && <span className="featured-badge">Рекомендований</span>}
+          {showFeatBadge && admin && onOpenReorder && (
+            <button type="button" className="feat-grip" title="Змінити порядок рекомендованих"
+              onClick={(e) => { e.stopPropagation(); onOpenReorder(); }}>
+              <GripIcon />
+            </button>
+          )}
+        </div>
         {/* «Обране» ♥️ — у кутку фото: тап додає/прибирає, поряд публічний лічильник */}
         {onToggleFav && (
           <button type="button"

@@ -289,12 +289,36 @@ button {
   position: relative;
 }
 
-/* Бейдж «Рекомендований» — делікатний піл у кутку картки */
-.featured-badge {
+/* Ряд бейджів у верхньому лівому куті картки: знижка і «Рекомендований» стоять
+   ПОРУЧ (а не замість одне одного); якщо не влазять — другий переходить на рядок
+   нижче. Праворуч лишаємо місце під адмін-тумблер 👁. */
+.card-badges {
   position: absolute;
   top: var(--space-2);
   left: var(--space-2);
   z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  max-width: calc(100% - var(--space-2) * 2);
+}
+/* В адмін-режимі праворуч зверху стоїть тумблер 👁 — лишаємо йому місце */
+.card-badges.with-admin { max-width: calc(100% - var(--space-2) - 44px); }
+
+/* Вузький екран: два бейджі мають поміститись В ОДИН РЯД на 2-колонковій сітці,
+   тож «Рекомендований» трохи компактніший (знижку не чіпаємо — це головний сигнал) */
+@media (max-width: 430px) {
+  .card-badges { gap: 4px; }
+  .card-badges .featured-badge {
+    font-size: 10px;
+    padding: 3px 6px;
+    letter-spacing: 0;
+  }
+}
+
+/* Бейдж «Рекомендований» — делікатний піл у кутку картки */
+.featured-badge {
   padding: 3px 8px;
   border-radius: var(--radius-full);
   background: var(--primary);
@@ -308,10 +332,6 @@ button {
    Зліва: не взаємовиключний з featured (featured лише для опублікованого), а праворуч
    місце займає адмін-тумблер 👁. */
 .unlisted-badge {
-  position: absolute;
-  top: var(--space-2);
-  left: var(--space-2);
-  z-index: 2;
   padding: 3px 8px;
   border-radius: var(--radius-full);
   background: rgba(0, 0, 0, 0.55);
@@ -466,10 +486,6 @@ button {
 
 /* Знижка: органічний бейдж «−X%» у кутку картки + інлайн біля ціни на сторінці */
 .sale-badge {
-  position: absolute;
-  top: var(--space-2);
-  left: var(--space-2);
-  z-index: 2;
   padding: 3px 8px;
   border-radius: var(--radius-full);
   background: var(--danger);
@@ -563,9 +579,6 @@ button {
 /* Маленька ручка ⠿ (лише перетягування порядку рекомендованих) — верхній лівий кут */
 /* Ручка ⠿ на рекомендованій картці — відкриває панель порядку (адмін) */
 .feat-grip {
-  position: absolute;
-  top: var(--space-2);
-  left: var(--space-2);
   z-index: 4;
   display: inline-flex;
   align-items: center;
@@ -1102,10 +1115,55 @@ button {
   position: fixed;
   inset: 0;
   z-index: 40;
-  overflow-y: auto;
+  overflow: hidden;            /* прокручується кожна панель окремо, не сторінка */
   background: var(--bg);
   animation: fade-in var(--dur-med) var(--ease);
-  padding-bottom: 96px;
+}
+
+/* Стрічка карток: [попередня][поточна][наступна]. Свайп рухає всю стрічку, тому
+   сусідня картка виїжджає рівно за пальцем — як у сучасних застосунках. */
+.swipe-rail {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+
+/* Панель = один товар на всю ширину, з власним вертикальним скролом і власним
+   transform (позиція у стрічці). Кожна панель везе свою кнопку «Замовити». */
+.product-pane {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg);
+}
+
+/* Мобільний: панель прокручується сама, тому «Замовити» — липка внизу ПАНЕЛІ.
+   (position:fixed усередині трансформованої панелі поїхало б разом зі скролом,
+   тому саме sticky; картка розтягнута на висоту панелі, щоб на короткому
+   контенті кнопка все одно стояла внизу екрана — як було раніше.) */
+@media (max-width: 767px) {
+  .product-pane > .product-sheet {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .product-pane .gallery { flex: none; }
+  .product-pane .product-side {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .product-pane .product-info { flex: 1; }
+  .product-pane .contact-bar {
+    position: sticky;
+    left: auto;
+    right: auto;
+  }
 }
 
 .gallery { position: relative; background: var(--surface); }
@@ -1351,8 +1409,14 @@ button {
   .product-page {
     background: rgba(0, 0, 0, 0.6);
     padding: 0;
+  }
+  /* Модал центрується в межах СВОЄЇ панелі — стрічка возить панелі цілком */
+  .product-pane {
     display: grid;
     place-items: center;   /* надійне центрування по обох осях */
+    overflow: hidden;
+    padding-bottom: 0;
+    background: transparent;
   }
   .product-sheet {
     width: min(960px, 94vw);

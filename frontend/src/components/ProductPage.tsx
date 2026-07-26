@@ -1,5 +1,6 @@
 // Повна сторінка товару: галерея (свайп), характеристики, зв'язок з продавцем
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { AdminAuth, ProductDetail, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
 import { parseTechnologies } from '../techLogos';
 import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
@@ -51,93 +52,157 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
 const cap = (s: string | null): string | null =>
   s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 
+// Проміжок між сусідніми картками під час свайпу: крізь нього видно фон — картка
+// саме «витягується» з-за краю, а не змінює вміст на місці.
+const SWIPE_GAP = 12;
+const SWIPE_EASE = 'cubic-bezier(.22,.61,.36,1)';
+
 export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin = false, onBack }: Props) => {
-  const [product, setProduct] = useState<ProductDetail | null>(null);
   const [error, setError] = useState(false);
-  const [slide, setSlide] = useState(0);
-  const [copied, setCopied] = useState(false);
-  const trackRef = useRef<HTMLDivElement>(null);
+  const [, bump] = useState(0);                    // ререндер, коли поповнився кеш деталей
+  const cache = useRef(new Map<string, ProductDetail>()).current;
   const pageRef = useRef<HTMLDivElement>(null);
-  const sheetRef = useRef<HTMLDivElement>(null);   // сама картка — її рухаємо під час свайпу
-  const galleryImgCountRef = useRef(0);   // к-сть фото поточної картки (для логіки свайпу)
+  const railRef = useRef<HTMLDivElement>(null);    // стрічка з трьох панелей
+  const railX = useRef(0);                         // поточне зміщення стрічки, px
+  const animating = useRef(false);                 // йде анімація переходу
+  const dragging = useRef(false);                  // палець зараз веде картку
+
+  // Ключ кешу враховує режим: адмін бачить більше полів, ніж публіка
+  const cacheKey = (id: number) => `${admin ? 'a' : 'p'}:${id}`;
+  const product = cache.get(cacheKey(productId)) ?? null;
 
   // Сусідні картки в поточному порядку каталогу (для гортання свайпом/стрілками)
   const idx = siblingIds.indexOf(productId);
   const prevId = idx > 0 ? siblingIds[idx - 1] : null;
   const nextId = idx >= 0 && idx < siblingIds.length - 1 ? siblingIds[idx + 1] : null;
-  const goSibling = (dir: -1 | 1) => {
-    const target = dir === -1 ? prevId : nextId;
-    if (target != null) onNavigate?.(target);
-    // Наближаємось до кінця завантаженого списку — просимо ще (безкінечне гортання)
-    if (dir === 1 && idx >= siblingIds.length - 2) onNeedMore?.();
-  };
+  // Панелі стрічки: [попередня] [поточна] [наступна]. Ключі = id товару, тому після
+  // переходу React ПЕРЕСУВАЄ вже змонтований DOM сусіда в центр, а не малює його заново
+  // — саме тому перемикання виглядає як один неперервний рух, без «блимання».
+  const ids = [prevId, productId, nextId].filter((v): v is number => v != null);
+  const baseIndex = ids.indexOf(productId);
+  // Свіжий зріз для обробників жесту (вони переживають рендери й не бачать нових пропсів)
+  const live = useRef({ baseIndex, prevId, nextId, idx, total: siblingIds.length });
+  live.current = { baseIndex, prevId, nextId, idx, total: siblingIds.length };
 
   useEffect(() => showBackButton(onBack), [onBack]);
 
-  // Esc закриває картку; ← / → гортають сусідні картування (зручно на десктопі)
+  // Завантаження деталей у кеш: поточна картка + СУСІДИ наперед — щоб під час свайпу
+  // сусідня панель уже була намальована (жодного очікування мережі всередині жесту).
+  useEffect(() => {
+    let cancelled = false;
+    const load = (id: number, isCurrent: boolean) => {
+      if (cache.has(cacheKey(id))) return;
+      fetchProduct(id, admin).then((p) => {
+        if (cancelled) return;
+        cache.set(cacheKey(id), p);
+        const url = p.images[0]?.url;
+        if (url) new Image().src = url;            // перше фото — теж наперед
+        bump((n) => n + 1);
+      }).catch(() => { if (!cancelled && isCurrent) setError(true); });
+    };
+    setError(false);
+    load(productId, true);
+    [prevId, nextId].forEach((sid) => { if (sid != null) load(sid, false); });
+    return () => { cancelled = true; };
+  }, [productId, prevId, nextId, admin]);
+
+  // Локальні зміни картки (обране, опис, знижка) — правимо копію в кеші
+  const patchProduct = (id: number, updater: (p: ProductDetail) => ProductDetail) => {
+    const cur = cache.get(cacheKey(id));
+    if (!cur) return;
+    cache.set(cacheKey(id), updater(cur));
+    bump((n) => n + 1);
+  };
+
+  // ── Стрічка: геометрія і рух ───────────────────────────────────────────────
+  const stepPx = () => (pageRef.current?.clientWidth || window.innerWidth) + SWIPE_GAP;
+  const restPx = () => -live.current.baseIndex * stepPx();
+  const setRail = (px: number, dur = 0) => {
+    const r = railRef.current;
+    if (!r) return;
+    railX.current = px;
+    r.style.transition = dur ? `transform ${dur}ms ${SWIPE_EASE}` : 'none';
+    r.style.transform = `translate3d(${px}px,0,0)`;
+  };
+
+  // Стрічка завжди стоїть на «своїй» панелі: після зміни товару, доїзду списку чи
+  // повороту екрана. Під час анімації переходу не чіпаємо — інакше зіб'ємо рух.
+  // (і поки палець веде картку — теж не чіпаємо: список міг довантажитись саме в цю мить)
+  useLayoutEffect(() => { if (!animating.current && !dragging.current) setRail(restPx()); });
+  useEffect(() => {
+    const onResize = () => { if (!animating.current && !dragging.current) setRail(restPx()); };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // Перехід на сусідню картку однією неперервною анімацією: стрічка доїжджає рівно
+  // на крок, і В ТОМУ Ж кадрі, коли рух завершився, ми міняємо productId і повертаємо
+  // стрічку в базове положення — сусідня панель уже під пальцем, тож підміни не видно.
+  const slideTo = (dir: -1 | 1, velocity = 0) => {
+    if (animating.current) return;          // попередній перехід ще їде — не накладаємось
+    const target = dir === 1 ? live.current.nextId : live.current.prevId;
+    if (target == null) { setRail(restPx(), 240); return; }
+    const to = restPx() - dir * stepPx();
+    const dist = Math.abs(to - railX.current);
+    // Тривалість за швидкістю кидка: різкий флік — швидше, повільне ведення — м'якше
+    const dur = Math.round(Math.min(360, Math.max(170, dist / Math.max(1.1, Math.abs(velocity) * 1.6))));
+    const rail = railRef.current;
+    animating.current = true;
+    let guard = 0;
+    const commit = () => {
+      if (!animating.current) return;
+      animating.current = false;
+      window.clearTimeout(guard);
+      rail?.removeEventListener('transitionend', onDone);
+      // flushSync: DOM з новою центральною панеллю має з'явитися ДО того, як стрічка
+      // повернеться в базове положення — інакше буде видно кадр зі стрибком.
+      flushSync(() => onNavigate?.(target));
+      setRail(restPx());
+      // Наближаємось до кінця завантаженого списку — просимо ще (безкінечне гортання)
+      if (dir === 1 && live.current.idx >= live.current.total - 2) onNeedMore?.();
+    };
+    const onDone = (e: TransitionEvent) => {
+      if (e.target === rail && e.propertyName === 'transform') commit();
+    };
+    guard = window.setTimeout(commit, dur + 140);   // на випадок втраченого transitionend
+    rail?.addEventListener('transitionend', onDone);
+    setRail(to, dur);
+  };
+
+  // Esc закриває картку; ← / → гортають сусідні картки (зручно на десктопі)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onBack();
-      else if (e.key === 'ArrowLeft' && prevId != null) goSibling(-1);
-      else if (e.key === 'ArrowRight' && nextId != null) goSibling(1);
+      else if (e.key === 'ArrowLeft' && prevId != null) slideTo(-1);
+      else if (e.key === 'ArrowRight' && nextId != null) slideTo(1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onBack, prevId, nextId]);
-
-  // Заздалегідь підвантажуємо дані й перше фото сусідніх карток — щоб свайп
-  // (готовий, коли до нього доходить палець) не «блимав» очікуванням мережі.
-  useEffect(() => {
-    [prevId, nextId].forEach((sid) => {
-      if (sid == null) return;
-      fetchProduct(sid, admin).then((p) => {
-        const url = p.images[0]?.url;
-        if (url) new Image().src = url;
-      }).catch(() => {});
-    });
-  }, [prevId, nextId, admin]);
 
   // Свайп між картками: горизонтальний жест ПОЗА галереєю (галерея ловить свій
   // свайп фото). Розмежовуємо за початковою точкою дотику й домінантою осі X.
   useEffect(() => {
     const el = pageRef.current;
     if (!el) return;
-    let x0 = 0, y0 = 0, inGallery = false, active = false, atStart = true, atEnd = true;
+    let x0 = 0, y0 = 0, lastX = 0, lastT = 0, v = 0, dx = 0;
+    let active = false, inGallery = false, atStart = true, atEnd = true;
     let mode: 'undecided' | 'drag' | 'ignore' = 'undecided';
-    let dx = 0;
-    const EASE = 'transform .26s cubic-bezier(.22,.61,.36,1), opacity .26s ease';
-
-    // Рухаємо саму картку. animate=false — миттєво (слідування за пальцем).
-    // will-change вмикаємо лише на час руху/анімації (не статично в CSS!) — інакше
-    // він створює containing block для position:fixed .contact-bar/.back-fab, і
-    // панель «Замовити» прилипає до низу КАРТКИ замість viewport (обрізає контент).
-    // Вимикається по transitionend нижче, коли картка остаточно стала на місце.
-    const setX = (x: number, animate = false) => {
-      const s = sheetRef.current;
-      if (!s) return;
-      s.style.willChange = 'transform';
-      s.style.transition = animate ? EASE : 'none';
-      s.style.transform = x ? `translate3d(${x}px,0,0)` : '';
-      // Легке згасання під час відведення — відчуття «картка йде»
-      s.style.opacity = x ? String(Math.max(0.5, 1 - Math.abs(x) / (window.innerWidth * 1.1))) : '';
-    };
-    const onTransitionEnd = (e: TransitionEvent) => {
-      if (e.propertyName === 'transform' && sheetRef.current?.style.transform === '') {
-        sheetRef.current.style.willChange = 'auto';
-      }
-    };
 
     const onStart = (e: TouchEvent) => {
+      if (animating.current) return;              // ще їде — новий жест не перехоплюємо
       const t = e.touches[0];
-      x0 = t.clientX; y0 = t.clientY; active = true; mode = 'undecided'; dx = 0;
+      x0 = lastX = t.clientX; y0 = t.clientY; lastT = e.timeStamp;
+      v = 0; dx = 0; active = true; mode = 'undecided';
       // Галерея перехоплює свайп ЛИШЕ коли є що гортати (≥2 фото). За одного фото
       // свайп по фото теж гортає ТОВАРИ (інакше на фото «нічого не відбувається»).
-      inGallery = !!(e.target as HTMLElement)?.closest?.('.gallery') && galleryImgCountRef.current > 1;
+      const g = (e.target as HTMLElement)?.closest?.('.gallery') as HTMLElement | null;
+      const track = g?.querySelector('.gallery-track') as HTMLElement | null;
+      inGallery = !!g && g.querySelectorAll('.gallery-slide').length > 1;
       // Чи галерея вже на краю ДО жесту — щоб «дотяг» за останнє/перше фото
       // гортав ТОВАРИ (як у великих магазинах), а не впирався в кінець стрічки.
-      const tr = trackRef.current;
-      atStart = !tr || tr.scrollLeft <= 2;
-      atEnd = !tr || tr.scrollLeft >= tr.scrollWidth - tr.clientWidth - 2;
+      atStart = !track || track.scrollLeft <= 2;
+      atEnd = !track || track.scrollLeft >= track.scrollWidth - track.clientWidth - 2;
     };
 
     const onMove = (e: TouchEvent) => {
@@ -152,127 +217,57 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
         mode = horizontal && allowed ? 'drag' : 'ignore';
       }
       if (mode !== 'drag') return;
+      dragging.current = true;
+      // Гасимо власний скрол сторінки — інакше жест «пливе» по діагоналі
+      if (e.cancelable) e.preventDefault();
+      const dt = e.timeStamp - lastT;
+      if (dt > 0) { v = (t.clientX - lastX) / dt; lastX = t.clientX; lastT = e.timeStamp; }
       // Якщо в цей бік товарів немає — сильний опір (гумка), щоб було видно межу
-      const target = ddx < 0 ? nextId : prevId;
-      dx = target == null ? ddx * 0.22 : ddx;
-      setX(dx);
+      const noTarget = (ddx < 0 ? live.current.nextId : live.current.prevId) == null;
+      dx = noTarget ? ddx * 0.22 : ddx;
+      // Пишемо transform одразу: touchmove уже приходить покадрово, а зайвий rAF
+      // лише додав би кадр затримки між пальцем і карткою.
+      setRail(restPx() + dx);
     };
 
     const onEnd = () => {
       if (!active) return;
       active = false;
+      dragging.current = false;
       if (mode !== 'drag') { mode = 'undecided'; return; }
       mode = 'undecided';
-      const target = dx < 0 ? nextId : prevId;
-      if (Math.abs(dx) > 60 && target != null) {
-        const dir: -1 | 1 = dx < 0 ? 1 : -1;
-        const w = window.innerWidth;
-        setX(dir === 1 ? -w : w, true);          // поточна картка виїжджає
-        window.setTimeout(() => {
-          goSibling(dir);                         // перемикаємо товар
-          setX(dir === 1 ? w : -w);               // ставимо нову з протилежного боку
-          // Форсуємо перерахунок, щоб браузер зафіксував стартову позицію ДО переходу
-          // (надійніше за requestAnimationFrame — з ним картка інколи застрягала збоку).
-          void sheetRef.current?.offsetWidth;
-          setX(0, true);                          // і плавно вводимо на місце
-        }, 210);
-      } else {
-        setX(0, true);   // не дотягнув — пружиною назад
-      }
-      dx = 0;
+      const w = el.clientWidth || window.innerWidth;
+      const dir: -1 | 1 = dx < 0 ? 1 : -1;
+      const target = dir === 1 ? live.current.nextId : live.current.prevId;
+      // «Дотягнув» = чверть екрана АБО швидкий кидок (як у сучасних стрічках)
+      const pass = target != null
+        && (Math.abs(dx) > w * 0.24 || (Math.abs(v) > 0.45 && Math.abs(dx) > 24));
+      if (pass) slideTo(dir, v);
+      else setRail(restPx(), 260);   // не дотягнув — пружиною назад
+      dx = 0; v = 0;
     };
 
     el.addEventListener('touchstart', onStart, { passive: true });
-    el.addEventListener('touchmove', onMove, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
     el.addEventListener('touchend', onEnd, { passive: true });
     el.addEventListener('touchcancel', onEnd, { passive: true });
-    sheetRef.current?.addEventListener('transitionend', onTransitionEnd);
     return () => {
       el.removeEventListener('touchstart', onStart);
       el.removeEventListener('touchmove', onMove);
       el.removeEventListener('touchend', onEnd);
       el.removeEventListener('touchcancel', onEnd);
-      sheetRef.current?.removeEventListener('transitionend', onTransitionEnd);
-      // Страховка: ніколи не лишаємо картку зсунутою/напівпрозорою після розмонтування
-      const s = sheetRef.current;
-      if (s && !s.style.transition.includes('transform')) {
-        s.style.transform = ''; s.style.opacity = ''; s.style.willChange = 'auto';
-      }
+      // Страховка: якщо слухачі перечепились посеред жесту — не лишаємо стрічку зсунутою
+      if (dragging.current) { dragging.current = false; setRail(restPx()); }
     };
-    // product?.id ОБОВ'ЯЗКОВО в залежностях: доки товар вантажиться, рендериться інший
-    // .product-page (заглушка) БЕЗ ref → pageRef.current === null і слухачі не чіпляються.
-    // Без цієї залежності ефект більше не перезапускався, і на щойно відкритій картці
-    // свайп не працював зовсім (перечіплявся лише після переходу стрілкою).
-  }, [prevId, nextId, idx, siblingIds.length, product?.id]);
+    // product?.id у залежностях: доки товар вантажиться, рендериться заглушка БЕЗ ref
+    // (pageRef.current === null) і слухачі не чіпляються — без цього свайп на щойно
+    // відкритій картці не працював зовсім.
+  }, [product?.id]);
 
   // Клік по затемненому фону (поза карткою) на десктопі — закрити
-  const handleBackdrop = (e: React.MouseEvent) => { if (e.target === e.currentTarget) onBack(); };
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(false);
-    setSlide(0);                                   // нова картка — з першого фото
-    pageRef.current?.scrollTo({ top: 0 });         // і згори
-    trackRef.current?.scrollTo({ left: 0 });
-    fetchProduct(productId, admin)
-      .then((data) => { if (!cancelled) setProduct(data); })
-      .catch(() => { if (!cancelled) setError(true); });
-    return () => { cancelled = true; };
-  }, [productId, admin]);
-
-  const handleScroll = () => {
-    const track = trackRef.current;
-    if (!track) return;
-    const index = Math.round(track.scrollLeft / track.clientWidth);
-    if (index !== slide) setSlide(index);
-  };
-
-  // Навігація галереї (стрілки/крапки) з циклом
-  const goToSlide = (i: number) => {
-    const total = product?.images.length ?? 0;
-    if (total === 0) return;
-    const idx = (i + total) % total;
-    setSlide(idx);
-    trackRef.current?.scrollTo({ left: idx * (trackRef.current?.clientWidth ?? 0), behavior: 'smooth' });
-  };
-
-  const handleContact = () => {
-    haptic('medium');
-    if (product) contactSeller(sellerUsername, product.productnumber);
-  };
-
-  // ♥️ на сторінці товару: перемикаємо обране й оновлюємо лічильник у стані картки
-  const handleFav = () => {
-    if (!product || !onToggleFav) return;
-    onToggleFav(product.productnumber).then((r) => {
-      setProduct((p) => p ? {
-        ...p,
-        fav_count: r.fav_count != null ? r.fav_count : Math.max(0, (p.fav_count ?? 0) + (r.favorite ? 1 : -1)),
-      } : p);
-    });
-  };
-
-  // Копіювання номера товару в буфер обміну (з fallback для обмежених контекстів)
-  const handleCopyNumber = () => {
-    if (!product) return;
-    const text = product.productnumber;
-    const done = () => { haptic('light'); setCopied(true); setTimeout(() => setCopied(false), 1500); };
-    const fallback = () => {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand('copy'); } catch { /* ignore */ }
-      document.body.removeChild(ta);
-    };
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(done).catch(() => { fallback(); done(); });
-    } else {
-      fallback();
-      done();
-    }
+  const handleBackdrop = (e: React.MouseEvent) => {
+    const t = e.target as HTMLElement;
+    if (t.classList.contains('product-pane') && window.matchMedia('(min-width: 768px)').matches) onBack();
   };
 
   if (error) {
@@ -288,6 +283,110 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
   }
 
   if (!product) return <div className="product-page"><div className="empty">Завантаження…</div></div>;
+
+  return (
+    <div className="product-page" ref={pageRef} onClick={handleBackdrop}>
+      {!isInTelegram && <button type="button" className="back-fab" onClick={onBack} aria-label="Назад">←</button>}
+      <div className="swipe-rail" ref={railRef}>
+        {ids.map((id, i) => {
+          const p = cache.get(cacheKey(id));
+          return (
+            <div className="product-pane" key={id}
+              style={{ transform: `translate3d(calc(${i} * (100% + ${SWIPE_GAP}px)), 0, 0)` }}>
+              {p ? (
+                <ProductSheet product={p} admin={admin} adminAuth={adminAuth}
+                  onAdminAuthFailure={onAdminAuthFailure}
+                  isFavorite={isFavorite} onToggleFav={onToggleFav}
+                  onPatch={(updater) => patchProduct(id, updater)}
+                  sellerUsername={sellerUsername} sellerPhone={sellerPhone}
+                  sellerInstagram={sellerInstagram} sellerViber={sellerViber} />
+              ) : (
+                <div className="empty">Завантаження…</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+type SheetProps = {
+  product: ProductDetail;
+  onPatch: (updater: (p: ProductDetail) => ProductDetail) => void;
+  isFavorite?: (pn: string) => boolean;
+  onToggleFav?: (pn: string) => Promise<{ favorite: boolean; fav_count?: number }>;
+  adminAuth?: (onAuthed?: () => void) => AdminAuth | null;
+  onAdminAuthFailure?: (hint: string, retry?: () => void) => void;
+  sellerUsername: string;
+  sellerPhone: string;
+  sellerInstagram: string;
+  sellerViber: string;
+  admin: boolean;
+};
+
+// Одна картка товару всередині панелі стрічки: галерея, характеристики, зв'язок.
+// Власний стан галереї (слайд/скрол) — у кожної панелі свій, тому сусідні картки
+// не «підглядають» одна за одною під час свайпу.
+const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin }: SheetProps) => {
+  const [slide, setSlide] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { setSlide(0); trackRef.current?.scrollTo({ left: 0 }); }, [product.id]);
+
+  const handleScroll = () => {
+    const track = trackRef.current;
+    if (!track) return;
+    const index = Math.round(track.scrollLeft / track.clientWidth);
+    if (index !== slide) setSlide(index);
+  };
+
+  // Навігація галереї (стрілки/крапки) з циклом
+  const goToSlide = (i: number) => {
+    const total = product.images.length;
+    if (total === 0) return;
+    const next = (i + total) % total;
+    setSlide(next);
+    trackRef.current?.scrollTo({ left: next * (trackRef.current?.clientWidth ?? 0), behavior: 'smooth' });
+  };
+
+  const handleContact = () => {
+    haptic('medium');
+    contactSeller(sellerUsername, product.productnumber);
+  };
+
+  // ♥️ на сторінці товару: перемикаємо обране й оновлюємо лічильник у стані картки
+  const handleFav = () => {
+    if (!onToggleFav) return;
+    onToggleFav(product.productnumber).then((r) => {
+      onPatch((p) => ({
+        ...p,
+        fav_count: r.fav_count != null ? r.fav_count : Math.max(0, (p.fav_count ?? 0) + (r.favorite ? 1 : -1)),
+      }));
+    });
+  };
+
+  // Копіювання номера товару в буфер обміну (з fallback для обмежених контекстів)
+  const handleCopyNumber = () => {
+    const text = product.productnumber;
+    const done = () => { haptic('light'); setCopied(true); setTimeout(() => setCopied(false), 1500); };
+    const fallback = () => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch { /* ignore */ }
+      document.body.removeChild(ta);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => { fallback(); done(); });
+    } else {
+      fallback();
+      done();
+    }
+  };
 
   // Назва = бренд + модель (напр. «Ecco Street 720»)
   const titleText = [product.brandname, product.model].filter(Boolean).join(' ')
@@ -327,8 +426,6 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
   // «брудний» рядок у бейджі; лого підхопиться з /tech-logos/<slug>.svg, якщо є.
   const techs = parseTechnologies(product.technology);
 
-  galleryImgCountRef.current = product.images.length;   // для логіки свайпу (див. вище)
-
   // Знижка — ДВА джерела: акційна ціна каталогу (sale_price) АБО «стара» знижена
   // ціна (oldprice > price, скинуто в BMS). Обидві дають −X% і закреслений оригінал.
   const catalogSale = product.sale_price != null && product.sale_price < product.price;
@@ -338,10 +435,7 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
   const priceOriginal = catalogSale ? product.price : (legacySale ? product.oldprice! : null);
 
   return (
-    <div className="product-page" ref={pageRef} onClick={handleBackdrop}>
-      {!isInTelegram && <button type="button" className="back-fab" onClick={onBack} aria-label="Назад">←</button>}
-
-      <div className="product-sheet" ref={sheetRef}>
+    <div className="product-sheet">
       <div className="gallery">
         {/* Номер товару — мінімалістично в кутку, клік копіює в буфер */}
         <button type="button" className="number-pill" onClick={handleCopyNumber}
@@ -426,11 +520,11 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
             якщо адмін зробив його публічним (бекенд віддає description тільки тоді). */}
         {admin && adminAuth ? (
           <AdminDescription product={product} auth={adminAuth} onAuthFailure={onAdminAuthFailure}
-            onSaved={(patch) => setProduct((p) => p ? {
+            onSaved={(patch) => onPatch((p) => ({
               ...p,
               ...(patch.description !== undefined ? { description: patch.description } : {}),
               ...(patch.is_public !== undefined ? { description_public: patch.is_public } : {}),
-            } : p)} />
+            }))} />
         ) : product.description ? (
           <div className="detail-card">
             <h3>Опис</h3>
@@ -441,7 +535,7 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
         {/* Знижка — керує лише адмін (акційна ціна для вітрини, products.price недоторканий) */}
         {admin && adminAuth && (
           <AdminDiscount product={product} auth={adminAuth} onAuthFailure={onAdminAuthFailure}
-            onSaved={(r) => setProduct((p) => p ? { ...p, on_sale: r.is_on_sale, sale_price: r.sale_price } : p)} />
+            onSaved={(r) => onPatch((p) => ({ ...p, on_sale: r.is_on_sale, sale_price: r.sale_price }))} />
         )}
 
         {techs.length > 0 && (
@@ -512,7 +606,6 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
           )}
         </div>
       )}
-      </div>
       </div>
     </div>
   );
