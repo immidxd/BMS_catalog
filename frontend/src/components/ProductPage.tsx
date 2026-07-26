@@ -1,7 +1,7 @@
 // Повна сторінка товару: галерея (свайп), характеристики, зв'язок з продавцем
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { AdminAuth, ProductDetail, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
+import { AdminAuth, ProductDetail, cap, capSlash, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
 import { parseTechnologies } from '../techLogos';
 import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
 
@@ -47,10 +47,6 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
   if (min != null && max != null && min !== max) return `${min}–${max} см`;
   return `${min ?? max} см`;
 };
-
-// Стандартизована капіталізація значень характеристик (перша літера велика)
-const cap = (s: string | null): string | null =>
-  s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 
 // Проміжок між сусідніми картками під час свайпу: крізь нього видно фон — картка
 // саме «витягується» з-за краю, а не змінює вміст на місці.
@@ -420,7 +416,8 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
 
   const materialRows = MATERIAL_ORDER
     .filter((position) => product.materials[position]?.length)
-    .map((position) => [MATERIAL_LABELS[position], cap(product.materials[position].join(', '))] as const);
+    .map((position) => [MATERIAL_LABELS[position],
+      product.materials[position].map((m) => capSlash(m)).join(', ')] as const);
 
   // Технології моделі (GORE-TEX, Vibram…) — важливий аргумент вибору. Парсимо
   // «брудний» рядок у бейджі; лого підхопиться з /tech-logos/<slug>.svg, якщо є.
@@ -558,7 +555,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
           {specs.filter(([, value]) => value).map(([key, value]) => (
             <div className="spec-row" key={key}>
               <span className="spec-key">{key}</span>
-              <span className="spec-val">{cap(value)}</span>
+              <span className="spec-val">{capSlash(value)}</span>
             </div>
           ))}
         </div>

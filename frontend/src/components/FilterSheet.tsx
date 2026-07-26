@@ -1,7 +1,7 @@
 // Нижній лист гнучких фільтрів каталогу — компактний акордеон зі згорнутими
 // секціями: користувач бачить охайний перелік, розгортає лише потрібне.
 import { ReactNode, useEffect, useMemo, useState } from 'react';
-import { CatalogQuery, Facets, FilterOption, FilterOptions, fetchCatalog, fetchFacets, formatPrice } from '../api';
+import { CatalogQuery, Facets, FilterOption, FilterOptions, capSlash, fetchCatalog, fetchFacets, formatPrice } from '../api';
 import { useDebounced } from '../hooks/useCatalog';
 import { haptic, hapticSelect } from '../telegram';
 
@@ -118,7 +118,7 @@ const SearchableChips = ({ options, selectedIds, query, onQueryChange, onToggle,
           <button type="button" key={opt.id}
             className={`chip${selected.has(opt.id) ? ' active' : ''}`}
             onClick={() => onToggle(opt.id)}>
-            {opt.name}<span className="option-count">{opt.count}</span>
+            {capSlash(opt.name)}<span className="option-count">{opt.count}</span>
           </button>
         ))}
       </div>
@@ -227,7 +227,7 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
     <button type="button" key={opt.id}
       className={`chip${draft[key]?.includes(opt.id) ? ' active' : ''}`}
       onClick={() => toggleId(key, opt.id)}>
-      {opt.name}<span className="option-count">{opt.count}</span>
+      {capSlash(opt.name)}<span className="option-count">{opt.count}</span>
     </button>
   ));
 

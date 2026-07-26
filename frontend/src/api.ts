@@ -281,6 +281,21 @@ export const setFeaturedOrder = async (productnumbers: string[], auth: AdminAuth
 export const formatPrice = (price: number): string =>
   `${new Intl.NumberFormat('uk-UA').format(price)} грн`;
 
+// Стандартизована капіталізація значень (перша літера велика)
+export const cap = (s: string | null): string | null =>
+  s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+
+// Значення через «/» показуємо в одному стилі — з пробілами навколо слеша і кожною
+// частиною з великої літери: «Білий/молочний» → «Білий / Молочний» (як «Хороший / Сток»).
+// У БД записи різнобійні, тому нормалізуємо на показі — самі дані не чіпаємо.
+export const capSlash = (s: string | null): string | null => {
+  if (!s || !s.includes('/')) return cap(s);
+  const parts = s.split('/').map((p) => p.trim()).filter(Boolean);
+  // Слеш у числах/розмірах (напр. «30/40 см») — це не перелік, лишаємо як є
+  if (parts.length < 2 || !parts.every((p) => /^\p{L}/u.test(p))) return cap(s);
+  return parts.map((p) => cap(p)).join(' / ');
+};
+
 // Сезон для показу: якщо їх кілька і є «Всесезон» — «Всесезон» ховаємо
 // (показуємо лише решту); розділювач — слеш. Один «Всесезон» лишаємо як є.
 export const formatSeason = (season: string | null): string | null => {
