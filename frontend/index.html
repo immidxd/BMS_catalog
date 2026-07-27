@@ -44,12 +44,16 @@
       </button>
     </div>
     <script>
-      // Якщо за 8 секунд застосунок не змонтувався — показуємо заглушку, а не чорний екран
+      // Якщо за 8 секунд застосунок не змонтувався — показуємо заглушку, а не чорний екран.
+      // Далі стежимо далі: якщо застосунок таки піднявся (повільна мережа) — ховаємо її.
       setTimeout(function () {
         var root = document.getElementById('root');
-        if (root && root.children.length === 0) {
-          document.getElementById('boot-fallback').style.display = 'block';
-        }
+        var box = document.getElementById('boot-fallback');
+        if (!root || !box) return;
+        if (root.children.length === 0) box.style.display = 'block';
+        var timer = setInterval(function () {
+          if (root.children.length > 0) { box.style.display = 'none'; clearInterval(timer); }
+        }, 500);
       }, 8000);
     </script>
     <script type="module" src="/src/main.tsx"></script>
