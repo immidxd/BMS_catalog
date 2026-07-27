@@ -8,11 +8,50 @@
          Якщо зміниш домен фото (R2_PUBLIC_BASE_URL) — онови й цей host. -->
     <link rel="preconnect" href="https://pub-2002131bdaa64e7cb898ccac677a16e8.r2.dev" crossorigin />
     <link rel="dns-prefetch" href="https://pub-2002131bdaa64e7cb898ccac677a16e8.r2.dev" />
+    <!-- Самолікування «застряглого» HTML. Telegram (особливо десктопний) кешує сторінку
+         міні-застосунку попри no-store. Після деплою імена бандлів змінюються, і старий
+         HTML тягне вже неіснуючий /assets/index-XXXX.js → 404 і ПОРОЖНІЙ екран.
+         Ловимо помилку завантаження скрипта/стилю і один раз (не частіше ніж раз на
+         хвилину, щоб не було циклу) перезавантажуємось із обходом кешу. -->
+    <script>
+      (function () {
+        var KEY = 'tgshop-asset-reload';
+        window.addEventListener('error', function (e) {
+          var el = e.target;
+          if (!el || (el.tagName !== 'SCRIPT' && el.tagName !== 'LINK')) return;
+          if (!/\/assets\//.test(el.src || el.href || '')) return;
+          try {
+            var last = Number(sessionStorage.getItem(KEY) || 0);
+            if (Date.now() - last < 60000) return;      // вже пробували щойно — не циклимо
+            sessionStorage.setItem(KEY, String(Date.now()));
+          } catch (err) { /* приватний режим — просто пробуємо раз */ }
+          location.replace(location.pathname + '?v=' + Date.now());
+        }, true);
+      })();
+    </script>
     <!-- Офіційний SDK Telegram Mini Apps: тема, кнопки, haptics -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
   <body>
     <div id="root"></div>
+    <!-- Заглушка на випадок, якщо бандл не завантажився (кеш/мережа): замість чорного
+         екрана користувач бачить пояснення й кнопку. Живе ПОЗА #root, щоб не заважати React. -->
+    <div id="boot-fallback" style="display:none;font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#8a8a8e;text-align:center;padding:48px 24px">
+      <div style="margin-bottom:14px">Не вдалося завантажити каталог</div>
+      <button type="button" onclick="location.replace(location.pathname + '?v=' + Date.now())"
+        style="font:inherit;padding:10px 18px;border:0;border-radius:10px;background:#2f80ed;color:#fff;cursor:pointer">
+        Оновити
+      </button>
+    </div>
+    <script>
+      // Якщо за 8 секунд застосунок не змонтувався — показуємо заглушку, а не чорний екран
+      setTimeout(function () {
+        var root = document.getElementById('root');
+        if (root && root.children.length === 0) {
+          document.getElementById('boot-fallback').style.display = 'block';
+        }
+      }, 8000);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
