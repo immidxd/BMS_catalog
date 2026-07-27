@@ -14,12 +14,49 @@
 Локальні креди — зі звичайних DB_* (.env у корені BMS_catalog).
 Щогодинний автозапуск — через launchd (див. cloud/com.bms.catalog.sync.plist).
 """
+import fcntl
 import io
 import os
 import sys
 import time
 import psycopg2
 from dotenv import load_dotenv
+
+# ── Запобіжники проти «підвисання всього BMS» ────────────────────────────────
+# Реальний інцидент: цей скрипт завис на мережевому запиті до хмари, тримаючи
+# ВІДКРИТУ читальну транзакцію на локальній catalog_listings. Наступний
+# щогодинний запуск спробував ALTER TABLE на тій самій таблиці — і став у чергу
+# за нею. У Postgres черга блокувань FIFO, тож за цим ALTER стали ВСІ читачі
+# catalog_listings, а список товарів у BMS джойниться з нею → застосунок
+# повністю зависав (HTTP 500 по lock timeout).
+#
+# Три незалежні лінії оборони:
+#   1) один екземпляр за раз (flock) — накладання запусків неможливе;
+#   2) серверні таймаути на локальній сесії — навіть якщо процес зависне,
+#      Postgres сам прибере його транзакцію за LOCAL_IDLE_TX_TIMEOUT;
+#   3) DDL лише коли колонки справді бракує, і завжди під lock_timeout.
+LOCK_PATH = os.getenv("CATALOG_SYNC_LOCK", "/tmp/bms_catalog_sync.lock")
+LOCAL_IDLE_TX_TIMEOUT = os.getenv("CATALOG_SYNC_IDLE_TX_TIMEOUT", "2min")
+LOCAL_LOCK_TIMEOUT = os.getenv("CATALOG_SYNC_LOCK_TIMEOUT", "3s")
+LOCAL_STATEMENT_TIMEOUT = os.getenv("CATALOG_SYNC_STATEMENT_TIMEOUT", "10min")
+
+
+def _acquire_single_instance_lock():
+    """Ексклюзивний flock на весь час роботи. Другий запуск просто виходить.
+
+    Повертає file-об'єкт (тримати до кінця процесу — закриття знімає лок).
+    """
+    fh = open(LOCK_PATH, "w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fh.close()
+        print("↷ Синхрон уже виконується — цей запуск пропускаю "
+              f"(лок: {LOCK_PATH}).")
+        sys.exit(0)
+    fh.write(str(os.getpid()))
+    fh.flush()
+    return fh
 
 # Маніфест: таблиця → колонки (None = всі). orders/order_items — лише для sold_count.
 TABLES = {
@@ -81,20 +118,41 @@ def _merge_catalog_listings(lc, cc, local_dsn: dict) -> tuple:
         updated_at timestamptz NOT NULL DEFAULT now())""")
     # Адитивні фіче-колонки на ОБИДВОХ сторонах (щоб SELECT/INSERT з ними не падали).
     # local — READONLY, тож локальні ALTER — через окреме rw-з'єднання ДО читання.
-    feature_ddl = [
-        "ADD COLUMN IF NOT EXISTS is_description_public boolean NOT NULL DEFAULT false",
-        "ADD COLUMN IF NOT EXISTS sale_price numeric",
-        "ADD COLUMN IF NOT EXISTS is_on_sale boolean NOT NULL DEFAULT false",
-        "ADD COLUMN IF NOT EXISTS featured_order integer",
-    ]
-    for ddl in feature_ddl:
-        cc.execute(f"ALTER TABLE catalog_listings {ddl}")
+    feature_cols = {
+        "is_description_public": "boolean NOT NULL DEFAULT false",
+        "sale_price": "numeric",
+        "is_on_sale": "boolean NOT NULL DEFAULT false",
+        "featured_order": "integer",
+    }
+    for col, typ in feature_cols.items():
+        cc.execute(f"ALTER TABLE catalog_listings ADD COLUMN IF NOT EXISTS {col} {typ}")
     lrw = psycopg2.connect(**local_dsn)
     try:
         lrc = lrw.cursor()
-        for ddl in feature_ddl:
-            lrc.execute(f"ALTER TABLE catalog_listings {ddl}")
-        lrw.commit()
+        # ⚠️ ALTER TABLE бере ACCESS EXCLUSIVE — поки він чекає в черзі, за ним
+        # стають УСІ читачі таблиці (і BMS зависає). Тому:
+        #   • спершу дивимось, чого справді бракує — у нормальному прогоні
+        #     жодного ALTER не виконується взагалі;
+        #   • якщо ALTER потрібен — під lock_timeout, і при невдачі тихо
+        #     виходимо з мерджу, а не тримаємо чергу.
+        lrc.execute("""SELECT column_name FROM information_schema.columns
+                       WHERE table_schema='public' AND table_name='catalog_listings'""")
+        present = {r[0] for r in lrc.fetchall()}
+        missing = {c: t for c, t in feature_cols.items() if c not in present}
+        if missing:
+            lrc.execute(f"SET lock_timeout = '{LOCAL_LOCK_TIMEOUT}'")
+            try:
+                for col, typ in missing.items():
+                    lrc.execute(
+                        f"ALTER TABLE catalog_listings ADD COLUMN IF NOT EXISTS {col} {typ}")
+                lrw.commit()
+            except psycopg2.errors.LockNotAvailable:
+                lrw.rollback()
+                print("  ⚠ catalog_listings зайнята іншою транзакцією — "
+                      "пропускаю мердж публікацій цього разу (BMS не блокуємо)")
+                return 0, 0
+        else:
+            lrw.commit()
 
         cc.execute(sel)
         cloud_rows = {r[0]: r for r in cc.fetchall()}
@@ -161,6 +219,9 @@ def _columns(local_cur, table, want):
 
 
 def main():
+    # Тримаємо лок до кінця процесу: паралельних запусків (щогодинний launchd +
+    # ручний тригер із BMS) більше не буває — саме їх накладання й підвісило БД.
+    lock_fh = _acquire_single_instance_lock()  # noqa: F841 — живе до виходу
     load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
     cloud_url = os.getenv("CLOUD_DATABASE_URL")
     if not cloud_url:
@@ -175,7 +236,22 @@ def main():
     # readonly: у BMS-таблиці не пишемо. Єдиний виняток — catalog_listings
     # (таблиця каталогу): двобічний мердж через ОКРЕМЕ rw-з'єднання.
     local.set_session(readonly=True)
-    cloud = psycopg2.connect(cloud_url)
+    # Серверні запобіжники на ЛОКАЛЬНІЙ сесії: якщо процес зависне на мережі до
+    # хмари, Postgres сам обірве його транзакцію й звільнить локи — BMS не
+    # постраждає навіть у найгіршому сценарії.
+    _lc0 = local.cursor()
+    _lc0.execute(f"SET idle_in_transaction_session_timeout = '{LOCAL_IDLE_TX_TIMEOUT}'")
+    _lc0.execute(f"SET statement_timeout = '{LOCAL_STATEMENT_TIMEOUT}'")
+    _lc0.execute(f"SET lock_timeout = '{LOCAL_LOCK_TIMEOUT}'")
+    local.commit()
+    _lc0.close()
+    # Хмара через мережу: без keepalive обрив каналу вішає скрипт на години
+    # (саме так і сталося) — тримаємо TCP-перевірку живості й ліміт на конект.
+    cloud = psycopg2.connect(
+        cloud_url,
+        connect_timeout=int(os.getenv("CATALOG_SYNC_CONNECT_TIMEOUT", "15")),
+        keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3,
+    )
     lc, cc = local.cursor(), cloud.cursor()
 
     cc.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
@@ -201,6 +277,11 @@ def main():
     # Публікації — двобічний мердж (newest-wins), НЕ простий push.
     m_total, m_back = _merge_catalog_listings(lc, cc, local_dsn)
     print(f"  ✓ catalog_listings: {m_total} рядків (мердж; у локальну повернуто {m_back})")
+
+    # Локальних читань більше не буде (catalog_images читає ДИСК, не БД) — закриваємо
+    # читальну транзакцію ТУТ, до найдовшої частини (заливання в хмару). Інакше вона
+    # висіла б відкритою всю мережеву роботу й тримала локи на таблицях BMS.
+    local.rollback()
 
     # catalog_images — ПОХІДНА таблиця (нема локально): список фото-шляхів з диска,
     # щоб хмарний images.py будував індекс без диска (CATALOG_IMAGES_SOURCE=db).
