@@ -184,6 +184,30 @@ _OUTER_SORTS = {
     "price_desc": "MAX(price) DESC, MIN(id) DESC",
 }
 
+# Сортування за інтересом покупців (в UI — лише адмін-чіпи «Перегляди/Лайки/
+# Найпопулярніші»). «Найпопулярніші» = перегляди + лайки з вагою: ♥ — набагато
+# сильніший сигнал, ніж відкрив картки, тому ×10. Напрям _asc — щоб побачити
+# «мертві» позиції (найменше переглядів/лайків), не гортаючи весь список.
+_POP_SORTS = {
+    "views_desc": "SUM(views_n) DESC",
+    "views_asc": "SUM(views_n) ASC",
+    "favs_desc": "SUM(favs_n) DESC",
+    "favs_asc": "SUM(favs_n) ASC",
+    "popular_desc": "(SUM(views_n) + 10 * SUM(favs_n)) DESC",
+    "popular_asc": "(SUM(views_n) + 10 * SUM(favs_n)) ASC",
+}
+
+# Метрики приєднуємо ЛИШЕ для сортувань популярності: catalog_views/catalog_favorites —
+# додаткові таблиці (самостворюються на старті), тож звичайні запити каталогу від них
+# не залежать і не ламаються, якщо їх ще немає.
+_POP_JOINS = """
+        LEFT JOIN catalog_views cv ON cv.productnumber = p.productnumber
+        LEFT JOIN (
+            SELECT productnumber, COUNT(*) AS fav_count
+            FROM catalog_favorites GROUP BY productnumber
+        ) cf ON cf.productnumber = p.productnumber
+"""
+
 # «Підпис торгової пропозиції» (псевдоніми per_number): бренд+тип+колір+модель+
 # сезон+ціна+стан. За ним різні номери (різні завози ІДЕНТИЧНОГО товару в тому ж
 # стані й за тією ж ціною) зливаються в ОДНУ публічну картку. Адмін
@@ -414,7 +438,12 @@ async def get_catalog(
     db: Session = Depends(get_db),
 ):
     """Список наявних товарів з фільтрами та пагінацією."""
-    order_by = _OUTER_SORTS.get(sort, _OUTER_SORTS["newest"])
+    is_pop = sort in _POP_SORTS
+    if is_pop:
+        # Ліміти рівні — далі впорядковуємо новинками, щоб порядок був стабільний
+        order_by = f"{_POP_SORTS[sort]}, {_OUTER_SORTS['newest']}"
+    else:
+        order_by = _OUTER_SORTS.get(sort, _OUTER_SORTS["newest"])
     # «Рекомендовані» спливають угору лише у дефолтній (кураторській) сітці «Новинки»;
     # при явному сортуванні за ціною поважаємо вибір користувача без піну.
     if sort == "newest":
@@ -427,7 +456,10 @@ async def get_catalog(
         min_price, max_price, min_cm, max_cm, has_photo, only_published, favnums, on_sale,
     )
 
-    base_sql = f"{_FULL_JOINS} WHERE {_AVAILABLE_WHERE} {where_sql}"
+    base_sql = f"{_FULL_JOINS}{_POP_JOINS if is_pop else ''} WHERE {_AVAILABLE_WHERE} {where_sql}"
+    # Метрики в per_number — лише коли за ними сортуємо (див. _POP_JOINS)
+    pop_cols = (", MAX(COALESCE(cv.views, 0)) AS views_n, MAX(COALESCE(cf.fav_count, 0)) AS favs_n"
+                if is_pop else "")
 
     # Внутрішній рівень: агрегуємо рядки-розміри по номеру (як було). Зовнішній:
     # групуємо номери у пропозицію за підписом (або лишаємо по номеру для адміна).
@@ -450,18 +482,19 @@ async def get_catalog(
                    lower(btrim(coalesce(MIN(p.model), ''))) AS model_key,
                    lower(btrim(coalesce(MIN(p.season), ''))) AS season_key,
                    MIN(COALESCE(p.current_conditionid, p.conditionid)) AS cond_key
+                   {pop_cols}
             {base_sql}
             GROUP BY p.productnumber
         )
     """
 
-    total = db.execute(text(
-        f"{per_number} SELECT COUNT(*) FROM (SELECT 1 FROM per_number GROUP BY {group_key}) t"
-    ), params).scalar() or 0
-
-    rows = db.execute(
-        text(f"""
-            {per_number}
+    def _run(cte: str, order: str):
+        total = db.execute(text(
+            f"{cte} SELECT COUNT(*) FROM (SELECT 1 FROM per_number GROUP BY {group_key}) t"
+        ), params).scalar() or 0
+        rows = db.execute(
+            text(f"""
+            {cte}
             SELECT jsonb_agg(jsonb_build_object(
                        'id', id, 'pn', productnumber, 'of', coalesce(official_photos_from, ''),
                        'sizes', sizes, 'size_letters', size_letters
@@ -474,11 +507,23 @@ async def get_catalog(
                    MIN(featured_order) AS featured_order
             FROM per_number
             GROUP BY {group_key}
-            ORDER BY {order_by}
+            ORDER BY {order}
             LIMIT :limit OFFSET :offset
         """),
-        {**params, "limit": per_page, "offset": (page - 1) * per_page},
-    ).mappings().all()
+            {**params, "limit": per_page, "offset": (page - 1) * per_page},
+        ).mappings().all()
+        return total, rows
+
+    try:
+        total, rows = _run(per_number, order_by)
+    except Exception:
+        db.rollback()
+        if not is_pop:
+            raise
+        # Таблиць метрик ще нема (перший старт/хмара до синку) — каталог не валимо:
+        # прибираємо метрики із запиту й віддаємо звичайний порядок «Новинки».
+        total, rows = _run(per_number.replace(_POP_JOINS, "").replace(pop_cols, ""),
+                           _OUTER_SORTS["newest"])
 
     def _size_sort_key(value: str) -> float:
         try:

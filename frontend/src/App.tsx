@@ -18,6 +18,16 @@ const SORTS: Array<{ value: NonNullable<CatalogQuery['sort']>; label: string }> 
   { value: 'price_desc', label: 'Дорожчі' },
 ];
 
+// Адмін-аналітика (лише для адміна): сортування за інтересом покупців. Чіпи стоять
+// одразу за звичайними сортуваннями — бо це той самий вибір (взаємовиключні), лише
+// пунктирні, щоб було видно: це службові. Повторний тап по активному чіпу перевертає
+// напрям (↓ найбільше → ↑ найменше — щоб бачити й «мертві» позиції).
+const ADMIN_SORTS = [
+  { key: 'views', label: 'Перегляди', hint: 'Сортувати за переглядами картки' },
+  { key: 'favs', label: 'Лайки', hint: 'Сортувати за ♥ у «Обраному»' },
+  { key: 'popular', label: 'Найпопулярніші', hint: 'Перегляди + лайки разом (♥ важить ×10)' },
+] as const;
+
 // Дефолт каталогу: «Тільки з фото» увімкнено за замовчуванням (базовий стан,
 // не рахується як активний фільтр). Скидання повертає саме до цього дефолту.
 const DEFAULT_QUERY: CatalogQuery = { sort: 'newest', has_photo: true };
@@ -289,6 +299,17 @@ export const App = () => {
     setQuery((q) => ({ ...q, sort }));
   };
 
+  // Адмін-сортування: перший тап — від найбільшого (↓), повторний по активному —
+  // перевертає на найменше (↑). Інші фільтри лишаються (це саме сортування, не фільтр).
+  const adminSortBase = (query.sort || '').replace(/_(asc|desc)$/, '');
+  const handleAdminSort = (key: (typeof ADMIN_SORTS)[number]['key']) => {
+    hapticSelect();
+    setQuery((q) => ({
+      ...q,
+      sort: q.sort === `${key}_desc` ? `${key}_asc` : `${key}_desc`,
+    } as CatalogQuery));
+  };
+
   // Швидкі чіпи-фільтри одним тапом: тип «Сумки» і сезон «Літо». Id типу беремо
   // з фасетів за назвою (не хардкодимо), тож чіп зникає, якщо сумок немає в наявності.
   const bagType = filterOptions?.types.find((t) => t.name === 'Сумка');
@@ -393,6 +414,21 @@ export const App = () => {
               {sort.label}
             </button>
           ))}
+          {/* Адмін-аналітика: топ за переглядами / лайками / обома разом. Публіці
+              не рендеримо взагалі — чіпів просто немає в розмітці. */}
+          {isAdmin && ADMIN_SORTS.map((s) => {
+            const active = adminSortBase === s.key;
+            const asc = query.sort === `${s.key}_asc`;
+            return (
+              <button type="button" key={s.key} title={s.hint}
+                className={`chip chip-admin${active ? ' active' : ''}`}
+                onClick={() => handleAdminSort(s.key)}>
+                <AdminSortIcon kind={s.key} />
+                {s.label}
+                {active && <span className="sort-dir">{asc ? '↑' : '↓'}</span>}
+              </button>
+            );
+          })}
           {/* «Обране»: показати лише збережені товари користувача */}
           <button type="button" className={`chip chip-fav${favView ? ' active' : ''}`}
             onClick={toggleFavView}>
@@ -555,6 +591,21 @@ const ChipHeartIcon = ({ filled }: { filled?: boolean }) => (
     <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z" />
   </svg>
 );
+
+// Іконки адмін-чіпів аналітики: око (перегляди), серце (лайки), полум'я (популярність)
+const AdminSortIcon = ({ kind }: { kind: 'views' | 'favs' | 'popular' }) => {
+  if (kind === 'favs') return <ChipHeartIcon filled />;
+  if (kind === 'views') return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.4-.5-2-1-3-1.1-2.1-.2-4.1 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.2.4-2.3 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+    </svg>
+  );
+};
 
 // Іконка скидання (стрілка-коло) — інтуїтивний знак «повернути як було»
 const ResetIcon = () => (

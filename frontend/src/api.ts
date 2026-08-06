@@ -119,7 +119,11 @@ export type CatalogQuery = {
   only_published?: boolean;   // публіка=true; адмін може вимкнути, щоб бачити весь пул
   // публіка=true (зливаємо дублі-завози в одну картку); адмін=false (кожен номер окремо)
   group_offers?: boolean;
-  sort?: 'newest' | 'price_asc' | 'price_desc';
+  // Публічні сортування + адмін-аналітика (перегляди/лайки/популярність, ↓ і ↑).
+  // Адмін-чіпи показуються лише адміну — публіка їх у інтерфейсі не бачить.
+  sort?: 'newest' | 'price_asc' | 'price_desc'
+       | 'views_desc' | 'views_asc' | 'favs_desc' | 'favs_asc'
+       | 'popular_desc' | 'popular_asc';
 };
 
 const buildParams = (query: CatalogQuery, page: number, perPage: number): URLSearchParams => {
