@@ -197,14 +197,19 @@ _POP_SORTS = {
     "popular_asc": "(SUM(views_n) + 10 * SUM(favs_n)) ASC",
 }
 
-# Метрики приєднуємо ЛИШЕ для сортувань популярності: catalog_views/catalog_favorites —
+# Метрики приєднуємо ЛИШЕ для сортувань популярності. Перегляди беруться з
+# явних product_view-подій (GET деталей не рахується, бо UI префетчить сусідів),
+# а лайки — з актуального privacy-safe стану відвідувачів.
 # додаткові таблиці (самостворюються на старті), тож звичайні запити каталогу від них
 # не залежать і не ламаються, якщо їх ще немає.
 _POP_JOINS = """
-        LEFT JOIN catalog_views cv ON cv.productnumber = p.productnumber
+        LEFT JOIN (
+            SELECT productnumber, COUNT(*) AS views
+            FROM catalog_events WHERE event_type = 'product_view' GROUP BY productnumber
+        ) cv ON cv.productnumber = p.productnumber
         LEFT JOIN (
             SELECT productnumber, COUNT(*) AS fav_count
-            FROM catalog_favorites GROUP BY productnumber
+            FROM catalog_favorite_state GROUP BY productnumber
         ) cf ON cf.productnumber = p.productnumber
 """
 
@@ -567,7 +572,9 @@ async def get_catalog(
         try:
             vmap = {
                 vr[0]: vr[1] for vr in db.execute(
-                    text("SELECT productnumber, views FROM catalog_views WHERE productnumber = ANY(:pns)"),
+                    text("SELECT productnumber, COUNT(*) FROM catalog_events "
+                         "WHERE event_type='product_view' AND productnumber = ANY(:pns) "
+                         "GROUP BY productnumber"),
                     {"pns": [it["productnumber"] for it in items]},
                 ).all()
             }
@@ -581,7 +588,7 @@ async def get_catalog(
         try:
             fmap = {
                 fr[0]: fr[1] for fr in db.execute(
-                    text("SELECT productnumber, COUNT(*) FROM catalog_favorites "
+                    text("SELECT productnumber, COUNT(*) FROM catalog_favorite_state "
                          "WHERE productnumber = ANY(:pns) GROUP BY productnumber"),
                     {"pns": [it["productnumber"] for it in items]},
                 ).all()
@@ -603,7 +610,8 @@ async def get_catalog(
 async def get_catalog_views(db: Session = Depends(get_db)):
     """Мапа {productnumber: перегляди} — для «живого» оновлення бейджів у адмін-режимі."""
     try:
-        rows = db.execute(text("SELECT productnumber, views FROM catalog_views WHERE views > 0")).all()
+        rows = db.execute(text("SELECT productnumber, COUNT(*) AS views FROM catalog_events "
+                               "WHERE event_type='product_view' GROUP BY productnumber")).all()
         return {"views": {r[0]: int(r[1]) for r in rows}}
     except Exception:
         db.rollback()
@@ -898,20 +906,13 @@ async def get_catalog_product(
     except Exception:
         db.rollback()          # таблиці ще нема (не синхронізовано) — технології не критичні
 
-    # Лічильник переглядів: інкрементуємо ЛИШЕ на публічний відкрив картки (не адмін-
-    # перегляд only_published=false). Потім віддаємо поточне значення (для адмін-бейджа).
+    # Деталі картки — read-only. Сусідні картки завантажуються наперед, тому GET тут
+    # не є доказом перегляду. Явну product_view подію надсилає активна сторінка.
     views = 0
     try:
-        if only_published:
-            db.execute(text("""
-                INSERT INTO catalog_views (productnumber, views, updated_at)
-                VALUES (:pn, 1, now())
-                ON CONFLICT (productnumber)
-                DO UPDATE SET views = catalog_views.views + 1, updated_at = now()
-            """), {"pn": row["productnumber"]})
-            db.commit()
         views = db.execute(
-            text("SELECT views FROM catalog_views WHERE productnumber = :pn"),
+            text("SELECT COUNT(*) FROM catalog_events "
+                 "WHERE event_type='product_view' AND productnumber = :pn"),
             {"pn": row["productnumber"]},
         ).scalar() or 0
     except Exception:
@@ -992,7 +993,7 @@ async def get_catalog_product(
     fav_count = 0
     try:
         fav_count = db.execute(
-            text("SELECT COUNT(*) FROM catalog_favorites WHERE productnumber = :pn"),
+            text("SELECT COUNT(*) FROM catalog_favorite_state WHERE productnumber = :pn"),
             {"pn": row["productnumber"]},
         ).scalar() or 0
     except Exception:

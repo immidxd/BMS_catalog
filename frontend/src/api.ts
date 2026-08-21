@@ -1,4 +1,5 @@
 // Клієнт публічного API каталогу + типи відповідей
+import { analyticsHeaders } from './analytics';
 
 export type CatalogItem = {
   id: number;
@@ -220,7 +221,7 @@ export const toggleFavoriteServer = (
 ): Promise<{ fav_count: number }> =>
   fetch('/api/favorites', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData, ...analyticsHeaders() },
     // user_id — непідписаний фолбек: дозволяє рахувати ♥️ навіть коли initData не
     // верифікується сервером (напр. Mini App від іншого бота).
     body: JSON.stringify({ productnumber, favorite, user_id: userId ?? undefined }),
@@ -248,7 +249,7 @@ export const syncFavorites = (
 ): Promise<Record<string, number>> =>
   fetch('/api/favorites/sync', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData, ...analyticsHeaders() },
     body: JSON.stringify({ productnumbers, user_id: userId ?? undefined }),
   }).then((r) => (r.ok ? r.json() : { counts: {} })).then((d) => d.counts || {}).catch(() => ({}));
 

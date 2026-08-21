@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from auth import telegram_user_from_init_data
 from database import get_db
+from analytics import visitor_key
 
 router = APIRouter()
 
@@ -63,25 +64,37 @@ async def toggle_favorite(
     favorite: bool = Body(..., embed=True),
     user_id: Optional[int] = Body(None, embed=True),   # непідписаний фолбек для лічильника
     x_telegram_init_data: Optional[str] = Header(None),
+    x_catalog_visitor: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Додати/прибрати товар з «Обраного». Повертає новий публічний лічильник ♥️."""
-    uid = _count_user(x_telegram_init_data, user_id)
+    uid = _count_user(x_telegram_init_data, user_id) if (x_telegram_init_data or user_id) else None
+    key = visitor_key(x_telegram_init_data, user_id, x_catalog_visitor)
     pnum = (productnumber or "").strip()
     if not pnum:
         raise HTTPException(status_code=400, detail="Порожній номер")
     if favorite:
+        if uid is not None:
+            db.execute(text("""
+                INSERT INTO catalog_favorites (telegram_user_id, productnumber)
+                VALUES (:uid, :pn) ON CONFLICT DO NOTHING
+            """), {"uid": uid, "pn": pnum})
         db.execute(text("""
-            INSERT INTO catalog_favorites (telegram_user_id, productnumber)
-            VALUES (:uid, :pn) ON CONFLICT DO NOTHING
-        """), {"uid": uid, "pn": pnum})
+            INSERT INTO catalog_favorite_state (visitor_key, productnumber)
+            VALUES (:key, :pn)
+            ON CONFLICT (visitor_key, productnumber) DO UPDATE SET updated_at=now()
+        """), {"key": key, "pn": pnum})
     else:
+        if uid is not None:
+            db.execute(text(
+                "DELETE FROM catalog_favorites WHERE telegram_user_id = :uid AND productnumber = :pn"
+            ), {"uid": uid, "pn": pnum})
         db.execute(text(
-            "DELETE FROM catalog_favorites WHERE telegram_user_id = :uid AND productnumber = :pn"
-        ), {"uid": uid, "pn": pnum})
+            "DELETE FROM catalog_favorite_state WHERE visitor_key = :key AND productnumber = :pn"
+        ), {"key": key, "pn": pnum})
     db.commit()
     count = db.execute(
-        text("SELECT COUNT(*) FROM catalog_favorites WHERE productnumber = :pn"), {"pn": pnum}
+        text("SELECT COUNT(*) FROM catalog_favorite_state WHERE productnumber = :pn"), {"pn": pnum}
     ).scalar() or 0
     return {"productnumber": pnum, "favorite": favorite, "fav_count": int(count)}
 
@@ -91,23 +104,48 @@ async def sync_favorites(
     productnumbers: List[str] = Body(..., embed=True),
     user_id: Optional[int] = Body(None, embed=True),
     x_telegram_init_data: Optional[str] = Header(None),
+    x_catalog_visitor: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Ідемпотентно синхронізує обране користувача (з CloudStorage) у серверний лічильник
     (INSERT ON CONFLICT DO NOTHING) і повертає актуальні лічильники ♥️ по цих номерах.
     Так counts «наздоганяють» обране, зроблене на старому бандлі / іншому пристрої."""
-    uid = _count_user(x_telegram_init_data, user_id)
+    uid = _count_user(x_telegram_init_data, user_id) if (x_telegram_init_data or user_id) else None
+    key = visitor_key(x_telegram_init_data, user_id, x_catalog_visitor)
     pns = list({p.strip() for p in (productnumbers or []) if p and p.strip()})
+    # The client sends its complete authoritative CloudStorage/local set. Reconcile
+    # removals too, so a previously failed toggle cannot leave a ghost public like.
     if pns:
         db.execute(text("""
-            INSERT INTO catalog_favorites (telegram_user_id, productnumber)
-            SELECT :uid, unnest(CAST(:pns AS text[]))
-            ON CONFLICT DO NOTHING
-        """), {"uid": uid, "pns": pns})
+            DELETE FROM catalog_favorite_state
+            WHERE visitor_key=:key AND NOT (productnumber = ANY(:pns))
+        """), {"key": key, "pns": pns})
+        if uid is not None:
+            db.execute(text("""
+                DELETE FROM catalog_favorites
+                WHERE telegram_user_id=:uid AND NOT (productnumber = ANY(:pns))
+            """), {"uid": uid, "pns": pns})
+    else:
+        db.execute(text("DELETE FROM catalog_favorite_state WHERE visitor_key=:key"), {"key": key})
+        if uid is not None:
+            db.execute(text("DELETE FROM catalog_favorites WHERE telegram_user_id=:uid"), {"uid": uid})
+    if pns:
+        if uid is not None:
+            db.execute(text("""
+                INSERT INTO catalog_favorites (telegram_user_id, productnumber)
+                SELECT :uid, unnest(CAST(:pns AS text[]))
+                ON CONFLICT DO NOTHING
+            """), {"uid": uid, "pns": pns})
+        db.execute(text("""
+            INSERT INTO catalog_favorite_state (visitor_key, productnumber)
+            SELECT :key, unnest(CAST(:pns AS text[]))
+            ON CONFLICT (visitor_key, productnumber) DO UPDATE SET updated_at=now()
+        """), {"key": key, "pns": pns})
         db.commit()
         rows = db.execute(text(
-            "SELECT productnumber, COUNT(*) FROM catalog_favorites "
+            "SELECT productnumber, COUNT(*) FROM catalog_favorite_state "
             "WHERE productnumber = ANY(:pns) GROUP BY productnumber"
         ), {"pns": pns}).all()
         return {"counts": {r[0]: int(r[1]) for r in rows}}
+    db.commit()
     return {"counts": {}}

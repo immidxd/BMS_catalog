@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from admin import router as admin_router
+from analytics import ensure_analytics_tables, router as analytics_router
 from auth import admin_writes_enabled
 from catalog import router as catalog_router
 from favorites import router as favorites_router
@@ -56,6 +57,7 @@ async def get_config():
 app.include_router(catalog_router)
 app.include_router(admin_router)
 app.include_router(favorites_router)
+app.include_router(analytics_router)
 
 
 @app.on_event("startup")
@@ -70,7 +72,7 @@ def _ensure_catalog_tables() -> None:
                              _ensure_views_table)
     except Exception:
         return
-    for ensure in (_ensure_views_table, _ensure_favorites_table,
+    for ensure in (_ensure_views_table, _ensure_favorites_table, ensure_analytics_tables,
                    _ensure_description_public_column, _ensure_discount_columns,
                    _ensure_featured_order_column):
         db = SessionLocal()

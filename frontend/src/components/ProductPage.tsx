@@ -4,6 +4,7 @@ import { flushSync } from 'react-dom';
 import { AdminAuth, ProductDetail, cap, capSlash, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
 import { parseTechnologies } from '../techLogos';
 import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
+import { trackCatalogEvent } from '../analytics';
 
 type Props = {
   productId: number;
@@ -66,6 +67,12 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
   // Ключ кешу враховує режим: адмін бачить більше полів, ніж публіка
   const cacheKey = (id: number) => `${admin ? 'a' : 'p'}:${id}`;
   const product = cache.get(cacheKey(productId)) ?? null;
+
+  // Рахуємо тільки картку, яка справді стала активною. Сусідні fetchProduct нижче
+  // є технічним префетчем і в статистику не потрапляють.
+  useEffect(() => {
+    if (!admin && product?.productnumber) trackCatalogEvent('product_view', product.productnumber);
+  }, [admin, productId, product?.productnumber]);
 
   // Сусідні картки в поточному порядку каталогу (для гортання свайпом/стрілками)
   const idx = siblingIds.indexOf(productId);
@@ -349,6 +356,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
 
   const handleContact = () => {
     haptic('medium');
+    trackCatalogEvent('contact_click', product.productnumber, { channel: 'telegram' });
     contactSeller(sellerUsername, product.productnumber);
   };
 
@@ -582,21 +590,21 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
           )}
           {sellerPhone && (
             <button type="button" className="contact-ghost"
-              onClick={() => { haptic('light'); contactPhone(sellerPhone); }}
+              onClick={() => { haptic('light'); trackCatalogEvent('contact_click', product.productnumber, { channel: 'phone' }); contactPhone(sellerPhone); }}
               aria-label="Подзвонити" title="Подзвонити">
               <PhoneIcon />
             </button>
           )}
           {sellerInstagram && (
             <button type="button" className="contact-ghost"
-              onClick={() => { haptic('light'); contactInstagram(sellerInstagram); }}
+              onClick={() => { haptic('light'); trackCatalogEvent('contact_click', product.productnumber, { channel: 'instagram' }); contactInstagram(sellerInstagram); }}
               aria-label="Instagram" title="Instagram">
               <InstagramIcon />
             </button>
           )}
           {sellerViber && (
             <button type="button" className="contact-ghost"
-              onClick={() => { haptic('light'); contactViber(sellerViber); }}
+              onClick={() => { haptic('light'); trackCatalogEvent('contact_click', product.productnumber, { channel: 'viber' }); contactViber(sellerViber); }}
               aria-label="Viber" title="Viber">
               <ViberIcon />
             </button>

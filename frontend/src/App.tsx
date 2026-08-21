@@ -7,6 +7,7 @@ import { ProductCard, SkeletonCard } from './components/ProductCard';
 import { ProductPage } from './components/ProductPage';
 import { useCatalog, useDebounced } from './hooks/useCatalog';
 import { useFavorites } from './useFavorites';
+import { trackCatalogEvent } from './analytics';
 import { ADMIN_TOKEN_KEY, clearAdminToken, currentTheme, haptic, hapticSelect, hydrateAdminTokenFromCloud, initDataRaw, openChannel, saveAdminTokenEverywhere, telegramUserId, toggleTheme } from './telegram';
 
 // Адмін-режим (бачить тумблер «з фото» тощо): Telegram ID у allowlist або ?admin=1
@@ -62,6 +63,8 @@ export const App = () => {
   // й при власному тапі — щоб число завжди відповідало реальності.
   const [favCounts, setFavCounts] = useState<Record<string, number>>({});
 
+  useEffect(() => { trackCatalogEvent('catalog_open'); }, []);
+
   const searchRef = useRef<HTMLInputElement>(null);   // для фокуса після очищення хрестиком
   const debouncedSearch = useDebounced(search);
   const effSearch = debouncedSearch.trim().length >= 2 ? debouncedSearch.trim() : undefined;
@@ -87,9 +90,7 @@ export const App = () => {
   // Синк обраного → серверний лічильник (ідемпотентно), щоб counts «наздогнали» те,
   // що вже в обраному (старий бандл/інший пристрій). Оновлюємо override-лічильники.
   useEffect(() => {
-    if (favSet.size === 0) return;
     const init = initDataRaw();
-    if (!init && telegramUserId == null) return;
     syncFavorites(Array.from(favSet), init, telegramUserId)
       .then((counts) => setFavCounts((prev) => ({ ...prev, ...counts })));
   }, [favKey]);

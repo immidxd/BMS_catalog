@@ -308,6 +308,15 @@ def main():
     cloud.commit()
 
     lc.close(); cc.close(); local.close(); cloud.close()
+    # Після публікації товарного зрізу повертаємо лише похідну аналітику назад у
+    # локальну BMS. Якщо вона тимчасово недоступна, основний каталог уже успішно
+    # синхронізований і не відкочується.
+    try:
+        from sync_analytics_from_cloud import sync_once as _pull_analytics
+        result = _pull_analytics(cloud_url, local_dsn)
+        print(f"  ✓ catalog analytics: {result}")
+    except Exception as exc:
+        print(f"  ⚠ catalog analytics pull skipped: {exc}")
     print(f"✓ Синхрон завершено за {time.time() - t0:.1f}с")
 
 
