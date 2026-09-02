@@ -119,8 +119,14 @@ class _Layout:
         return (r[i] if i < len(r) else "").strip()
 
     def first_queue_row(self) -> Optional[int]:
+        """Початок блоку «В ЧЕРЗІ» — нижня межа зони замовлень.
+
+        ВЛАСНІ рядки (позначені CG) пропускаємо: вони теж мають статус «В ЧЕРЗІ»,
+        і без цього перше ж записане замовлення оголосило б початком черги саме
+        себе — межа поповзла б угору, і наступні замовлення нікуди було б класти."""
         for i in range(2, len(self.rows) + 1):
-            if self.cell(i, COL_STATUS).upper() == QUEUE_STATUS:
+            if (self.cell(i, COL_STATUS).upper() == QUEUE_STATUS
+                    and self.cell(i, COL_COMMENT).upper() != CATALOG_MARK):
                 return i
         return None
 
@@ -128,10 +134,16 @@ class _Layout:
         return all(_blank(self.cell(row, h)) for h in WRITABLE)
 
     def free_rows(self) -> List[int]:
-        """Вільні рядки після останнього заповненого й до початку черги."""
+        """Вільні рядки одразу після блоку ЗАМОВЛЕНЬ і до початку «В ЧЕРЗІ».
+
+        «Останнє замовлення» рахуємо за наявністю НОМЕРА ТОВАРУ, а не за будь-яким
+        вмістом: між замовленнями й чергою живуть рядки-запити (клієнт + коментар,
+        статус УТОЧНИТИ, номера немає). Якби вони вважались заповненими, нові
+        замовлення падали б ПІД них, відірвано від свого блоку."""
         limit = self.first_queue_row() or (len(self.rows) + 1)
-        last_filled = max((i for i in range(2, limit) if not self.is_free(i)), default=1)
-        return [i for i in range(last_filled + 1, limit) if self.is_free(i)]
+        last_order = max((i for i in range(2, limit)
+                          if not _blank(self.cell(i, COL_NUMBERS))), default=1)
+        return [i for i in range(last_order + 1, limit) if self.is_free(i)]
 
     def a1(self, row: int, header: str) -> str:
         """Адреса однієї комірки ('S34'). Своя реалізація, щоб розкладку можна було
