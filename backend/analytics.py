@@ -18,7 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPExcep
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from auth import telegram_user_from_init_data
+from auth import telegram_profile_from_init_data, telegram_user_from_init_data
 from database import get_db
 import orders_sheet
 
@@ -200,8 +200,9 @@ async def record_event(
         # Передаємо номер ЯК Є, з решіткою: у БД він зберігається саме так
         # (#Ф4336), і без неї пошук ціни нічого не знаходив. Решітку для аркуша
         # зрізає вже сам писар — у власника в документі номери без неї.
-        background.add_task(orders_sheet.handle_contact_click,
-                            session_id, pnum, meta.get("size"))
+        background.add_task(orders_sheet.handle_contact_click, session_id, pnum,
+                            meta.get("size"),
+                            telegram_profile_from_init_data(x_telegram_init_data or ""))
 
     # Keep the old admin badge compatible, but increment it only for a genuine,
     # deduplicated active-card view. Historical inflated values are preserved as legacy.

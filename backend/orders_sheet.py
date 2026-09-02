@@ -47,16 +47,28 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 BLANK_MARKS = {"", "ㅤ"}
+# Статус нового замовлення з каталогу. Рішення власника: «ОЧІКУЄТЬСЯ» — це
+# замовлення, яке чекає обробки, а не позиція в черзі.
+# ⚠️ Формула «Замовлень» (COUNTIFS … "<>В Черзі", "<>Відміна", …) виключає лише
+# перелічені статуси; «ОЧІКУЄТЬСЯ» серед них НЕМАЄ, тож такі рядки РАХУЮТЬСЯ
+# у лічильниках «Замовлень»/«Лотів» і в касі на кінець дня — так і задумано.
+INTENT_STATUS = "ОЧІКУЄТЬСЯ"
+# Окремо — маркер початку блоку черги (нижня межа зони замовлень)
 QUEUE_STATUS = "В ЧЕРЗІ"
 CATALOG_MARK = "CG"
 
 COL_NUMBERS = "Номера товарів"
+COL_CLIENT = "Клієнт"
+COL_TELEGRAM = "Telegram"
 COL_PRICE = "Ціна"
 COL_DETAILS = "Уточнення"
 COL_STATUS = "Статус відповіді"
 COL_COMMENT = "Коментарі"
 COL_DATE = "Дата замовлення"
 WRITABLE = (COL_NUMBERS, COL_PRICE, COL_DETAILS, COL_STATUS, COL_COMMENT, COL_DATE)
+# Контакти пишемо, лише коли Telegram їх ПІДТВЕРДИВ підписом; у перевірці
+# «вільний рядок» вони теж враховуються — рядок із самим клієнтом не вільний.
+CONTACT_COLS = (COL_CLIENT, COL_TELEGRAM)
 
 _DATE_TITLE = re.compile(r"^(\d{2})\.(\d{2})\.(\d{4})$")
 # Один запис за раз у межах процесу: два одночасні кліки не мають цілити в один рядок
@@ -156,7 +168,8 @@ class _Layout:
         return None
 
     def is_free(self, row: int) -> bool:
-        return all(_blank(self.cell(row, h)) for h in WRITABLE)
+        cols = WRITABLE + tuple(c for c in CONTACT_COLS if c in self.col)
+        return all(_blank(self.cell(row, h)) for h in cols)
 
     def free_rows(self) -> List[int]:
         """Вільні рядки одразу після блоку ЗАМОВЛЕНЬ і до початку «В ЧЕРЗІ».
@@ -192,21 +205,28 @@ def _fmt_price(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else str(value)
 
 
-def _values(numbers: List[str], prices: List[str], details: List[str]) -> Dict[str, str]:
-    return {
+def _values(numbers: List[str], prices: List[str], details: List[str],
+            buyer: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    out = {
         COL_NUMBERS: _join(numbers),
         COL_PRICE: _join(prices),
         COL_DETAILS: _join(details),
-        COL_STATUS: QUEUE_STATUS,
+        COL_STATUS: INTENT_STATUS,
         COL_COMMENT: CATALOG_MARK,
         COL_DATE: date.today().strftime("%Y-%m-%d"),
     }
+    # Порожніми контактами НЕ затираємо те, що менеджер уже вписав руками
+    if buyer and buyer.get("name"):
+        out[COL_CLIENT] = buyer["name"]
+    if buyer and buyer.get("username"):
+        out[COL_TELEGRAM] = "@" + buyer["username"].lstrip("@")
+    return out
 
 
 def _is_ours(layout: _Layout, row: int) -> bool:
     """Чи цей рядок створили МИ і його ще не змінив власник."""
     return (layout.cell(row, COL_COMMENT).upper() == CATALOG_MARK
-            and layout.cell(row, COL_STATUS).upper() == QUEUE_STATUS
+            and layout.cell(row, COL_STATUS).upper() == INTENT_STATUS
             and layout.cell(row, COL_DATE) == date.today().strftime("%Y-%m-%d"))
 
 
@@ -249,7 +269,8 @@ def remember(db, session_id: str, title: str, row_index: int) -> None:
 
 
 def record_intent(productnumber: str, price: Optional[float], size: Optional[str],
-                  previous: Optional[Tuple[str, int]] = None) -> Optional[Tuple[str, int]]:
+                  previous: Optional[Tuple[str, int]] = None,
+                  buyer: Optional[Dict[str, str]] = None) -> Optional[Tuple[str, int]]:
     """Записати намір. Повертає (назва вкладки, рядок) — щоб наступний товар того
     самого відвідувача дописався СЮДИ Ж, а не створив новий рядок.
 
@@ -283,7 +304,7 @@ def record_intent(productnumber: str, price: Optional[float], size: Optional[str
             prices = [_fmt_price(price)] if price else []
             details = [detail] if detail else []
 
-        payload = _values(numbers, prices, details)
+        payload = _values(numbers, prices, details, buyer)
 
         # 2) Новий рядок — з перевіркою, що його не зайняли між читанням і записом
         candidates = [row] if row else layout.free_rows()
@@ -309,7 +330,8 @@ def record_intent(productnumber: str, price: Optional[float], size: Optional[str
         return None
 
 
-def handle_contact_click(session_id: str, productnumber: str, size: Optional[str]) -> None:
+def handle_contact_click(session_id: str, productnumber: str, size: Optional[str],
+                         buyer: Optional[Dict[str, str]] = None) -> None:
     """Фонова обробка кліку «Замовити». Викликається ПІСЛЯ відповіді користувачу —
     покупець не чекає на Google, чат відкривається одразу.
 
@@ -337,7 +359,7 @@ def handle_contact_click(session_id: str, productnumber: str, size: Optional[str
             ORDER BY p.id LIMIT 1
         """), {"pn": productnumber}).scalar()
         placed = record_intent(productnumber, float(price) if price else None,
-                               size, previous=recall(db, session_id))
+                               size, previous=recall(db, session_id), buyer=buyer)
         if placed:
             remember(db, session_id, placed[0], placed[1])
     except Exception as exc:                       # noqa: BLE001

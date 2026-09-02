@@ -70,6 +70,24 @@ def telegram_user_from_init_data(init_data: str, max_age_sec: int = 86400) -> Op
         return None
 
 
+def telegram_profile_from_init_data(init_data: str, max_age_sec: int = 86400) -> Optional[dict]:
+    """Ім'я та нік покупця з initData — ЛИШЕ після тієї ж перевірки підпису, що й
+    вище (профіль із клієнта без перевірки підробити тривіально).
+
+    Потрібно, щоб у документі «Замовлення» менеджер бачив, ХТО написав, а не
+    анонімний рядок. Повертає {id, name, username} або None поза Telegram.
+    """
+    uid = telegram_user_from_init_data(init_data, max_age_sec)
+    if uid is None:
+        return None
+    try:
+        user = json.loads(dict(parse_qsl(init_data, keep_blank_values=True)).get("user", "{}"))
+    except Exception:
+        return None
+    name = " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x).strip()
+    return {"id": uid, "name": name, "username": (user.get("username") or "").strip()}
+
+
 def verify_init_data(init_data: str, max_age_sec: int = 86400) -> Optional[int]:
     """Як telegram_user_from_init_data, але повертає id ЛИШЕ якщо user ∈ ADMIN_TG_IDS
     (для адмін-записів)."""
