@@ -292,20 +292,6 @@ button {
   padding: var(--space-2) var(--space-4) var(--space-6);
 }
 
-/* Заголовок групи в сітці («Рекомендовані» / «Усі товари»): на всю ширину рядка,
-   незалежно від кількості колонок — тому 1 / -1, а не фіксоване число. */
-.grid-section {
-  grid-column: 1 / -1;
-  margin: var(--space-2) 0 0;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--fg-subtle);
-}
-/* Перший заголовок стоїть одразу під лічильником товарів — зайвий відступ не потрібен */
-.grid-section:first-child { margin-top: 0; }
-
 /* Ширші екрани (десктопний Telegram/браузер): адаптивна кількість колонок */
 @media (min-width: 640px) {
   .grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }

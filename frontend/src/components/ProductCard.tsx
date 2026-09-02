@@ -15,8 +15,6 @@ type Props = {
   onOpenReorder?: () => void;               // відкрити панель порядку рекомендованих (адмін)
   isFav?: boolean;                          // чи товар у «Обраному» користувача
   onToggleFav?: (item: CatalogItem) => void;
-  // Коли сітка згрупована заголовком «Рекомендовані», плашка на картці зайва
-  hideFeaturedBadge?: boolean;
 };
 
 // Розміри для картки: пріоритет EU → літерні → см
@@ -27,7 +25,7 @@ const sizeLabel = (item: CatalogItem): string | null => {
   return null;
 };
 
-export const ProductCard = ({ item, onOpen, priority = false, admin = false, onTogglePublish, onToggleFeatured, onOpenReorder, isFav = false, onToggleFav, hideFeaturedBadge = false }: Props) => {
+export const ProductCard = ({ item, onOpen, priority = false, admin = false, onTogglePublish, onToggleFeatured, onOpenReorder, isFav = false, onToggleFav }: Props) => {
   const size = sizeLabel(item);
   const favCount = item.fav_count ?? 0;
   // Ключ спалаху ♥️ (0 = немає). Змінюємо число, щоб CSS-анімація перезапускалась
@@ -53,9 +51,7 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
   // «Рекомендований» і «−X%» НЕ конкурують: якщо товар і рекомендований, і зі знижкою —
   // показуємо обидва бейджі поруч (у спільному ряду .card-badges).
   const isFeatured = item.published && item.featured;
-  // Плашку публіці ховаємо, коли групу вже підписано заголовком сітки. Ручку ⠿
-  // адміна це НЕ стосується — інакше зникла б можливість перетягувати порядок.
-  const showFeatBadge = isFeatured && !hideFeaturedBadge;
+  const showFeatBadge = isFeatured;
   return (
     <div className="card-wrap" data-pn={item.productnumber}>
     <button type="button" className={`card${item.published ? '' : ' unlisted'}`}
