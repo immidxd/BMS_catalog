@@ -505,7 +505,7 @@ button {
   background: var(--surface-alt);
   color: var(--fg);
   font: inherit;
-  font-size: var(--text-base);
+  font-size: var(--text-md);   /* 16px: інакше iOS зумить сторінку при фокусі */
 }
 .desc-edit:focus { outline: none; border-color: var(--fg-muted); }
 .desc-save {
@@ -779,7 +779,7 @@ button {
   background: var(--surface-alt);
   color: var(--fg);
   font: inherit;
-  font-size: var(--text-base);
+  font-size: var(--text-md);   /* 16px: менший розмір змушує iOS зумити при фокусі */
   margin-bottom: var(--space-3);
 }
 .token-input:focus { outline: none; border-color: var(--fg-muted); }
@@ -942,6 +942,125 @@ button {
   transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 .footer-link:hover { color: var(--fg); border-color: var(--fg-faint); }
+
+/* ── Повноекранний перегляд фото з масштабуванням ───────────────────────────
+   Один набір жестів на Pointer Events обслуговує і палець, і мишу; тут — лише
+   те, що в них РІЗНЕ: підказка, курсори, стрілки й розміри елементів керування. */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 70;                 /* поверх картки (40) і листів (51) */
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fade-in var(--dur-med) var(--ease);
+}
+
+.lightbox-stage {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;          /* жести обробляємо самі, браузер не втручається */
+  cursor: zoom-in;
+}
+.lightbox-stage.zoomed { cursor: grab; }
+.lightbox-stage.zoomed:active { cursor: grabbing; }
+
+.lightbox-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  will-change: transform;
+}
+
+.lightbox-close,
+.lightbox-arrow {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  /* Підкладка ТЕМНА, а не світла: фото товарів студійні, на білому тлі — на ньому
+     світлі напівпрозорі кнопки просто зникали. Темна читається на обох. */
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  backdrop-filter: blur(6px);
+  transition: background var(--dur-fast) var(--ease);
+}
+.lightbox-close:hover,
+.lightbox-arrow:hover { background: rgba(0, 0, 0, 0.75); }
+
+.lightbox-close {
+  top: calc(var(--space-3) + env(safe-area-inset-top));
+  right: var(--space-3);
+  width: 40px;
+  height: 40px;
+  font-size: 17px;
+}
+
+.lightbox-counter {
+  position: absolute;
+  top: calc(var(--space-4) + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(6px);
+}
+
+.lightbox-hint {
+  position: absolute;
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
+/* Стрілки — лише там, де є курсор: на телефоні гортають свайпом, і кнопки
+   лише крали б місце в кадрі. */
+.lightbox-arrow { display: none; }
+
+@media (hover: hover) and (pointer: fine) {
+  .lightbox-arrow {
+    display: flex;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 46px;
+    height: 46px;
+    font-size: 30px;
+    line-height: 1;
+    padding-bottom: 4px;
+  }
+  .lightbox-arrow.prev { left: var(--space-4); }
+  .lightbox-arrow.next { right: var(--space-4); }
+}
+
+/* Фото в галереї картки — курсор підказує, що його можна відкрити */
+.gallery-slide img { cursor: zoom-in; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lightbox { animation: none; }
+}
 
 /* Зона біля лівого краю екрана — наведення курсору відкриває фільтри (десктоп) */
 .filter-hover-zone { display: none; }

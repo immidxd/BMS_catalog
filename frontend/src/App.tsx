@@ -406,7 +406,7 @@ export const App = () => {
             <input
               ref={searchRef}
               type="search"
-              placeholder={`Пошук у «${shopName}»`}
+              placeholder="Пошук у каталозі"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               aria-label="Пошук товарів"

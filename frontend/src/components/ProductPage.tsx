@@ -5,6 +5,7 @@ import { AdminAuth, ProductDetail, cap, capSlash, discountPct, fetchProduct, for
 import { parseTechnologies } from '../techLogos';
 import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, shareViaTelegram, showBackButton } from '../telegram';
 import { productUrl } from '../deepLink';
+import { Lightbox } from './Lightbox';
 import { trackCatalogEvent } from '../analytics';
 
 type Props = {
@@ -175,9 +176,13 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
     setRail(to, dur);
   };
 
-  // Esc закриває картку; ← / → гортають сусідні картки (зручно на десктопі)
+  // Esc закриває картку; ← / → гортають сусідні картки (зручно на десктопі).
+  // Поки зверху відкрито переглядач фото або лист — клавіші належать ЙОМУ: інакше
+  // одне Esc закривало б і переглядач, і картку, а → одночасно гортало б фото
+  // і перекидало на сусідній товар.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('.lightbox, .sheet')) return;
       if (e.key === 'Escape') onBack();
       else if (e.key === 'ArrowLeft' && prevId != null) slideTo(-1);
       else if (e.key === 'ArrowRight' && nextId != null) slideTo(1);
@@ -340,6 +345,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   const [slide, setSlide] = useState(0);
   const [copied, setCopied] = useState(false);
   const [shared, setShared] = useState(false);   // «Скопійовано ✓» після поділитися
+  const [zoomAt, setZoomAt] = useState<number | null>(null);   // відкрите фото в переглядачі
   const trackRef = useRef<HTMLDivElement>(null);
   // Обраний розмір їде в текст замовлення. Коли розмір один — беремо його одразу
   // (питати нема про що); коли їх кілька — покупець мусить обрати, інакше менеджер
@@ -520,8 +526,11 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
         <div className="gallery-track" ref={trackRef} onScroll={handleScroll}>
           {product.images.length > 0 ? product.images.map((img, i) => (
             <div className="gallery-slide" key={img.url}>
+              {/* Тап по фото — повноекранний перегляд із зумом: для стоку й вживаного
+                  можливість роздивитися потертість і є вирішальним аргументом. */}
               <img src={img.url} alt={titleText} decoding="async"
-                loading={i === 0 ? 'eager' : 'lazy'} />
+                loading={i === 0 ? 'eager' : 'lazy'}
+                onClick={() => { haptic('light'); setZoomAt(i); }} />
               {KIND_LABELS[img.kind] && <span className="kind-tag">{KIND_LABELS[img.kind]}</span>}
             </div>
           )) : <div className="gallery-slide">Без фото</div>}
@@ -678,6 +687,11 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
           </button>
         )}
       </div>
+
+      {zoomAt !== null && product.images.length > 0 && (
+        <Lightbox images={product.images} index={zoomAt} alt={titleText}
+          onClose={() => setZoomAt(null)} />
+      )}
 
       {(sellerUsername || sellerPhone || sellerInstagram || sellerViber) && (
         <div className="contact-bar">
