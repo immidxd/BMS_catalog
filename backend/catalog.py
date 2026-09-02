@@ -7,6 +7,7 @@
 """
 
 import math
+import os
 import re
 from typing import Any, Dict, List, Optional
 
@@ -45,6 +46,20 @@ def _display_material(name: str) -> str:
     ):
         s = re.sub(r"(?i)\bшкіра\b", "натуральна шкіра", s)
     return _ABBR_RE.sub(lambda m: _MAT_ABBR.get(m.group(0).lower(), m.group(0).upper()), s)
+
+
+# Поріг «справжньої» знижки, %. Червоний бейдж −4% поруч із −32% привчає покупця
+# не помічати червоне взагалі: у пулі були навіть −0% (1500 → 1496, економія 4 грн).
+# Нижче порогу товар для ПУБЛІКИ просто не вважається акційним — ціна показується
+# звичайною, без бейджа й закресленої старої. Адмін бачить сирі значення як є.
+_MIN_DISCOUNT_PCT = float(os.getenv("CATALOG_MIN_DISCOUNT_PCT", "10"))
+
+
+def _worth_showing(original: Optional[float], shown: Optional[float]) -> bool:
+    """Чи знижка достатня, щоб про неї говорити."""
+    if original is None or shown is None or original <= 0 or shown >= original:
+        return False
+    return (original - shown) / original * 100 >= _MIN_DISCOUNT_PCT
 
 
 def _display_condition(name: Optional[str]) -> Optional[str]:
@@ -263,11 +278,16 @@ def _build_filters(
     # display-гейті): (1) акційна ціна каталогу (is_on_sale + 0 < sale_price < price);
     # (2) «стара» знижка — у товарі вже стоїть oldprice > price (ціну скинуто в BMS).
     if on_sale:
+        # Той самий поріг, що й у показі: інакше чіп «Знижки %» приводив би на картки,
+        # де жодної знижки не видно (бейдж прихований як несуттєвий).
         conditions.append(
             "((COALESCE(cl.is_on_sale, FALSE) = TRUE AND cl.sale_price IS NOT NULL "
-            "  AND cl.sale_price > 0 AND cl.sale_price < p.price) "
-            " OR (p.oldprice IS NOT NULL AND p.oldprice > p.price))"
+            "  AND cl.sale_price > 0 AND cl.sale_price < p.price "
+            "  AND (p.price - cl.sale_price) / p.price * 100 >= :min_disc) "
+            " OR (p.oldprice IS NOT NULL AND p.oldprice > p.price "
+            "     AND (p.oldprice - p.price) / p.oldprice * 100 >= :min_disc))"
         )
+        params["min_disc"] = _MIN_DISCOUNT_PCT
 
     # «Обране»: показуємо лише товари з набору номерів користувача. Порожній/невалідний
     # набір → свідомо нічого не показуємо (фронт покаже «ви ще не маєте обраного»).
@@ -542,6 +562,22 @@ async def get_catalog(
         sizes = sorted({s for m in members for s in (m.get("sizes") or [])}, key=_size_sort_key)
         size_letters = sorted({l for m in members for l in (m.get("size_letters") or [])})
         rep, image = _pick_representative(members, official_only=only_published)
+        # Публіці показуємо лише ВІДЧУТНУ знижку (див. _MIN_DISCOUNT_PCT); адмін
+        # (only_published=false) бачить сирі значення — інакше редактор акційної
+        # ціни «забував» би щойно введені 5%.
+        price = float(r["price"])
+        raw_sale = float(r["sale_price"]) if r["sale_price"] is not None else None
+        raw_old = float(r["oldprice"]) if r["oldprice"] is not None else None
+        catalog_sale = bool(r["on_sale"]) and raw_sale is not None and 0 < raw_sale < price
+        legacy_sale = raw_old is not None and raw_old > price
+        if only_published:
+            if catalog_sale and not _worth_showing(price, raw_sale):
+                catalog_sale, raw_sale = False, None
+            if legacy_sale and not _worth_showing(raw_old, price):
+                legacy_sale, raw_old = False, None
+        sale_price = raw_sale if catalog_sale else None
+        old_price = raw_old if legacy_sale else None
+
         items.append({
             "id": rep["id"],
             "productnumber": rep["pn"],
@@ -549,7 +585,7 @@ async def get_catalog(
             "brand": r["brandname"],
             "type": r["typename"],
             "price": r["price"],
-            "oldprice": r["oldprice"],
+            "oldprice": old_price,
             "sizes": sizes,
             "size_letters": size_letters,
             "measurementscm": r["measurementscm"],
@@ -559,12 +595,8 @@ async def get_catalog(
             "published": r["published"],   # для адмін-сітки (бачить пул і що ввімкнено)
             # Знижка: акційна ціна каталогу АБО «стара» знижена ціна (oldprice > price).
             # Фронт за цими полями сам покаже −X% і закреслить початкову ціну.
-            "on_sale": (
-                (bool(r["on_sale"]) and r["sale_price"] is not None
-                 and 0 < float(r["sale_price"]) < float(r["price"]))
-                or (r["oldprice"] is not None and float(r["oldprice"]) > float(r["price"]))
-            ),
-            "sale_price": float(r["sale_price"]) if r["sale_price"] is not None else None,
+            "on_sale": catalog_sale or legacy_sale,
+            "sale_price": sale_price,
         })
 
     # Перегляди на картку (для адмін-бейджа) — один батч-запит по представниках.
@@ -981,13 +1013,22 @@ async def get_catalog_product(
         out["description"] = None
 
     # Знижка: акційна ціна каталогу (валідна, коли ввімкнено й 0 < sale < price) АБО
-    # «стара» знижена ціна (oldprice > price — ціну вже скинуто в BMS).
+    # «стара» знижена ціна (oldprice > price — ціну вже скинуто в BMS). Публіці —
+    # лише відчутна знижка (_MIN_DISCOUNT_PCT), адміну сирі значення (той самий
+    # принцип, що й у сітці: інакше редактор акційної ціни губив би введене).
+    price = float(row["price"])
     sale = float(row["sale_price"]) if row["sale_price"] is not None else None
-    out["sale_price"] = sale
-    out["on_sale"] = (
-        (bool(row["on_sale"]) and sale is not None and 0 < sale < float(row["price"]))
-        or (row["oldprice"] is not None and float(row["oldprice"]) > float(row["price"]))
-    )
+    old_price = float(row["oldprice"]) if row["oldprice"] is not None else None
+    catalog_sale = bool(row["on_sale"]) and sale is not None and 0 < sale < price
+    legacy_sale = old_price is not None and old_price > price
+    if only_published:
+        if catalog_sale and not _worth_showing(price, sale):
+            catalog_sale, sale = False, None
+        if legacy_sale and not _worth_showing(old_price, price):
+            legacy_sale, old_price = False, None
+    out["sale_price"] = sale if catalog_sale else None
+    out["oldprice"] = old_price if legacy_sale else None
+    out["on_sale"] = catalog_sale or legacy_sale
 
     # Лічильник «Обране» (♥️) — публічний
     fav_count = 0

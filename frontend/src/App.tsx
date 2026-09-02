@@ -1,5 +1,5 @@
 // TG Shop — каталог: пошук, фільтри, сітка товарів, сторінка товару
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { CatalogItem, CatalogQuery, Facets, FilterOptions, ShopInfoSection, fetchConfig, formatPrice, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, syncFavorites } from './api';
 import { HowToBuySheet } from './components/HowToBuySheet';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
@@ -248,6 +248,21 @@ export const App = () => {
     items.forEach((i) => { if (i.featured && !featOrder.includes(i.productnumber)) ordered.push(i); });
     return [...ordered, ...items.filter((i) => !i.featured)];
   }, [items, featOrder, isAdmin]);
+
+  // Кураторський блок. Рекомендовані спливають угору лише при сортуванні «Новинки»
+  // (див. catalog.py) — тоді вони йдуть суцільною групою, і плашка «Рекомендований»
+  // на КОЖНІЙ картці перетворювала перший екран на стіну однакових написів. Замість
+  // повторюваної плашки — один заголовок над групою: та сама інформація, сказана раз.
+  // У пошуку заголовок недоречний (там інший намір), при сортуванні за ціною групи
+  // взагалі немає — там плашка на картці лишається доречною.
+  const pinnedView = (query.sort ?? 'newest') === 'newest' && !effSearch && !favView;
+  const featuredHead = useMemo(() => {
+    if (!pinnedView || !displayItems[0]?.featured) return 0;
+    const rest = displayItems.findIndex((i) => !i.featured);
+    return rest === -1 ? displayItems.length : rest;
+  }, [pinnedView, displayItems]);
+  // Один рекомендований групою не є — заголовок тоді лише заважав би
+  const showSections = featuredHead > 1;
 
   // Список рекомендованих для панелі (у поточному порядку показу)
   const featuredItems = useMemo(() => displayItems.filter((i) => i.featured), [displayItems]);
@@ -527,13 +542,19 @@ export const App = () => {
           if (viewsMap[item.productnumber] != null) merged.views = viewsMap[item.productnumber];
           if (favCounts[item.productnumber] != null) merged.fav_count = favCounts[item.productnumber];
           return (
-          <ProductCard key={item.id} priority={i < 4}
-            item={merged}
-            onOpen={handleOpenProduct}
-            isFav={isFav(item.productnumber)} onToggleFav={handleToggleFav}
-            admin={isAdmin} onTogglePublish={adminWrites ? handleTogglePublish : undefined}
-            onToggleFeatured={adminWrites ? handleToggleFeatured : undefined}
-            onOpenReorder={adminWrites ? () => setReorderOpen(true) : undefined} />
+          <Fragment key={item.id}>
+            {showSections && i === 0 && <h2 className="grid-section">Рекомендовані</h2>}
+            {showSections && i === featuredHead && <h2 className="grid-section">Усі товари</h2>}
+            <ProductCard priority={i < 4}
+              item={merged}
+              onOpen={handleOpenProduct}
+              isFav={isFav(item.productnumber)} onToggleFav={handleToggleFav}
+              admin={isAdmin} onTogglePublish={adminWrites ? handleTogglePublish : undefined}
+              onToggleFeatured={adminWrites ? handleToggleFeatured : undefined}
+              onOpenReorder={adminWrites ? () => setReorderOpen(true) : undefined}
+              /* Заголовок групи вже сказав це — плашка на кожній картці була б повтором */
+              hideFeaturedBadge={showSections} />
+          </Fragment>
           );
         })}
         {isLoading && items.length === 0 && Array.from({ length: 6 }, (_, i) => <SkeletonCard key={`sk-${i}`} />)}
