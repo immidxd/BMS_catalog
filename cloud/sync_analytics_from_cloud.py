@@ -41,8 +41,12 @@ def _ensure_local(cur) -> None:
             visitor_key char(64) NOT NULL,
             session_id uuid NOT NULL,
             metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-            occurred_at timestamptz NOT NULL,
-            received_at timestamptz NOT NULL
+            -- DEFAULT обов'язковий і тут: таблицю створює той, хто стартував ПЕРШИМ
+            -- (CREATE TABLE IF NOT EXISTS другого вже нічого не міняє). Синхрон завжди
+            -- підставляє значення сам, а от застосунок покладається на DEFAULT — і без
+            -- нього кожна подія падала з 500 (NotNullViolation on occurred_at).
+            occurred_at timestamptz NOT NULL DEFAULT now(),
+            received_at timestamptz NOT NULL DEFAULT now()
         )
     """)
     cur.execute("""

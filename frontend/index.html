@@ -2,7 +2,12 @@
 <html lang="uk">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- Зум сторінки НЕ забороняємо: maximum-scale=1/user-scalable=no відрізали
+         людям зі слабким зором єдиний спосіб збільшити текст (порушення доступності).
+         Фото має власний повноекранний переглядач із масштабуванням, тож щипок по
+         сторінці лишається рідкісним запасним варіантом. Поля вводу — 16px, інакше
+         iOS сам наближав би сторінку при фокусі. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Каталог</title>
     <!-- Ранній TLS/DNS-конект до CDN фото (R2) — перше фото вантажиться швидше.
          Якщо зміниш домен фото (R2_PUBLIC_BASE_URL) — онови й цей host. -->

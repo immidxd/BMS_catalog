@@ -12,6 +12,8 @@ from auth import admin_writes_enabled
 from catalog import router as catalog_router
 from favorites import router as favorites_router
 from images import URL_PREFIX as IMAGES_URL_PREFIX, get_images_dir
+from sharing import router as sharing_router
+from shop_info import how_to_buy
 
 # Документація API (Swagger/ReDoc/openapi.json) — за замовчуванням ВИМКНЕНА:
 # публічно не світимо структуру API (зокрема існування адмін-ендпоінта).
@@ -48,6 +50,9 @@ async def get_config():
         # посилання — фронт отримує чистий нік (порожній — кнопки немає)
         "tg_channel": os.getenv("TG_CHANNEL", "").strip().rstrip("/").rsplit("/", 1)[-1].lstrip("@"),
         "shop_name": os.getenv("SHOP_NAME", "Каталог"),
+        # «Як купити» — їде разом із конфігом (він і так тягнеться на старті),
+        # щоб відкриття екрана не чекало окремого запиту
+        "how_to_buy": how_to_buy(),
         "admin_tg_ids": admin_ids,
         # Чи доступний адмін-запис публікації (Фаза 2) — щоб фронт знав, чи показувати тумблер
         "admin_writes": admin_writes_enabled(),
@@ -58,6 +63,9 @@ app.include_router(catalog_router)
 app.include_router(admin_router)
 app.include_router(favorites_router)
 app.include_router(analytics_router)
+# Адреси товарів (/t/<id>) і корінь із мета-тегами. ОБОВ'ЯЗКОВО до mount("/") нижче:
+# інакше статика перехопить «/» і прев'ю посилань не буде.
+app.include_router(sharing_router)
 
 
 @app.on_event("startup")

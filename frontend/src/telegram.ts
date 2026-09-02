@@ -13,7 +13,9 @@ type TelegramWebApp = {
   openTelegramLink: (url: string) => void;
   openLink?: (url: string) => void;
   onEvent: (event: string, cb: () => void) => void;
-  initDataUnsafe?: { user?: { id?: number } };
+  // start_param — «хвіст» посилання t.me/<бот>/<застосунок>?startapp=<id>: усередині
+  // Telegram шляху немає, тож пряме посилання на товар приходить саме сюди.
+  initDataUnsafe?: { user?: { id?: number }; start_param?: string };
   // CloudStorage (Bot API 6.9+): per-user сховище в хмарі Telegram, синхрон між
   // пристроями, БЕЗ initData/HMAC — надійно зберігає обране навіть коли сервер недоступний.
   CloudStorage?: {
@@ -106,11 +108,19 @@ export const showBackButton = (onBack: () => void): (() => void) => {
 };
 
 // Відкрити чат з менеджером із підставленою чернеткою замовлення
-export const contactSeller = (username: string, productnumber: string): void => {
-  const message = encodeURIComponent(`Мене цікавить ${productnumber}`);
-  const url = `https://t.me/${username}?text=${message}`;
+// Готовий текст замовлення складає сторінка товару (назва, номер, розмір, ціна) —
+// менеджер одразу бачить, про що мова, і діалог починається з домовленості.
+export const contactSeller = (username: string, message: string): void => {
+  const url = `https://t.me/${username}?text=${encodeURIComponent(message)}`;
   if (isInTelegram) tg!.openTelegramLink(url);
   else window.open(url, '_blank');
+};
+
+// Поділитися товаром усередині Telegram: нативний вибір чату, без виходу назовні
+export const shareViaTelegram = (url: string, title: string): void => {
+  const link = `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(title)}`;
+  if (isInTelegram) tg!.openTelegramLink(link);
+  else window.open(link, '_blank');
 };
 
 // Канал магазину — у Telegram відкривається нативно (без виходу з застосунку)

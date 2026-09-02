@@ -10,6 +10,7 @@ frontend/dist/
 
 # Середовище та секрети
 .env
+.env.*
 
 # macOS
 .DS_Store

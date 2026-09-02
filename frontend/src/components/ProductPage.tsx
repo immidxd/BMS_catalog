@@ -3,7 +3,9 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { AdminAuth, ProductDetail, cap, capSlash, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
 import { parseTechnologies } from '../techLogos';
-import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
+import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, shareViaTelegram, showBackButton } from '../telegram';
+import { productUrl } from '../deepLink';
+import { Lightbox } from './Lightbox';
 import { trackCatalogEvent } from '../analytics';
 
 type Props = {
@@ -22,6 +24,8 @@ type Props = {
   sellerPhone: string;
   sellerInstagram: string;
   sellerViber: string;
+  // Екран «Як купити» — відкривається зі сторінки товару, де сумнів найгостріший
+  onHowToBuy?: () => void;
   admin?: boolean;   // адмін може відкрити деталь ще не опублікованого товару
   onBack: () => void;
 };
@@ -54,7 +58,7 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
 const SWIPE_GAP = 12;
 const SWIPE_EASE = 'cubic-bezier(.22,.61,.36,1)';
 
-export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin = false, onBack }: Props) => {
+export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, onHowToBuy, admin = false, onBack }: Props) => {
   const [error, setError] = useState(false);
   const [, bump] = useState(0);                    // ререндер, коли поповнився кеш деталей
   const cache = useRef(new Map<string, ProductDetail>()).current;
@@ -172,9 +176,13 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
     setRail(to, dur);
   };
 
-  // Esc закриває картку; ← / → гортають сусідні картки (зручно на десктопі)
+  // Esc закриває картку; ← / → гортають сусідні картки (зручно на десктопі).
+  // Поки зверху відкрито переглядач фото або лист — клавіші належать ЙОМУ: інакше
+  // одне Esc закривало б і переглядач, і картку, а → одночасно гортало б фото
+  // і перекидало на сусідній товар.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('.lightbox, .sheet')) return;
       if (e.key === 'Escape') onBack();
       else if (e.key === 'ArrowLeft' && prevId != null) slideTo(-1);
       else if (e.key === 'ArrowRight' && nextId != null) slideTo(1);
@@ -302,7 +310,8 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
                   isFavorite={isFavorite} onToggleFav={onToggleFav}
                   onPatch={(updater) => patchProduct(id, updater)}
                   sellerUsername={sellerUsername} sellerPhone={sellerPhone}
-                  sellerInstagram={sellerInstagram} sellerViber={sellerViber} />
+                  sellerInstagram={sellerInstagram} sellerViber={sellerViber}
+                  onHowToBuy={onHowToBuy} />
               ) : (
                 <div className="empty">Завантаження…</div>
               )}
@@ -325,18 +334,33 @@ type SheetProps = {
   sellerPhone: string;
   sellerInstagram: string;
   sellerViber: string;
+  onHowToBuy?: () => void;
   admin: boolean;
 };
 
 // Одна картка товару всередині панелі стрічки: галерея, характеристики, зв'язок.
 // Власний стан галереї (слайд/скрол) — у кожної панелі свій, тому сусідні картки
 // не «підглядають» одна за одною під час свайпу.
-const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin }: SheetProps) => {
+const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, onHowToBuy, admin }: SheetProps) => {
   const [slide, setSlide] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [shared, setShared] = useState(false);   // «Скопійовано ✓» після поділитися
+  const [zoomAt, setZoomAt] = useState<number | null>(null);   // відкрите фото в переглядачі
   const trackRef = useRef<HTMLDivElement>(null);
+  // Обраний розмір їде в текст замовлення. Коли розмір один — беремо його одразу
+  // (питати нема про що); коли їх кілька — покупець мусить обрати, інакше менеджер
+  // отримає запит без найголовнішого і почне діалог з уточнення.
+  const [sizeId, setSizeId] = useState<number | null>(null);
+  const sizesRef = useRef<HTMLDivElement>(null);
+  const [sizesFlash, setSizesFlash] = useState(false);   // підсвітка «оберіть розмір»
 
   useEffect(() => { setSlide(0); trackRef.current?.scrollTo({ left: 0 }); }, [product.id]);
+
+  // Скидаємо вибір при переході на інший товар; єдиний розмір — обираємо самі
+  useEffect(() => {
+    setSizesFlash(false);
+    setSizeId(product.size_variants.length === 1 ? product.size_variants[0].id : null);
+  }, [product.id, product.size_variants]);
 
   const handleScroll = () => {
     const track = trackRef.current;
@@ -354,10 +378,58 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     trackRef.current?.scrollTo({ left: next * (trackRef.current?.clientWidth ?? 0), behavior: 'smooth' });
   };
 
+  // Розмірів кілька, а вибору ще нема — вести в чат зарано: підсвічуємо блок розмірів
+  // і прокручуємо до нього. Це м'якше за заблоковану кнопку, яка нічого не пояснює.
+  const askForSize = (): boolean => {
+    if (product.size_variants.length <= 1 || sizeId != null) return false;
+    haptic('light');
+    sizesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setSizesFlash(true);
+    setTimeout(() => setSizesFlash(false), 1600);
+    return true;
+  };
+
+  // Повідомлення менеджеру: назва, номер, розмір і ціна — щоб діалог починався з
+  // домовленості, а не з двох уточнювальних питань з обох боків.
+  const orderMessage = (): string => {
+    const chosen = product.size_variants.find((v) => v.id === sizeId);
+    const price = onSale && priceOriginal
+      ? `${formatPrice(shownPrice)} (замість ${formatPrice(priceOriginal)})`   // formatPrice уже дає «грн»
+      : formatPrice(shownPrice);
+    return [
+      'Доброго дня! Цікавить товар:',
+      '',
+      `${titleText} — ${product.productnumber}`,
+      chosen ? `Розмір: ${variantLabel(chosen)}` : null,
+      `Ціна: ${price}`,
+    ].filter((l) => l !== null).join('\n');
+  };
+
+  // Поділитися товаром. Посилання веде на /t/<id> — бекенд віддає ту саму вітрину,
+  // але з мета-тегами, тож у чаті воно розгортається карткою з фото й ціною.
+  const handleShare = () => {
+    haptic('light');
+    const url = productUrl(product.id, titleText);
+    if (isInTelegram) {
+      shareViaTelegram(url, titleText);
+      return;
+    }
+    if (navigator.share) {
+      void navigator.share({ title: titleText, url }).catch(() => { /* скасував — не помилка */ });
+      return;
+    }
+    void navigator.clipboard?.writeText(url)
+      .then(() => { setShared(true); setTimeout(() => setShared(false), 1500); })
+      .catch(() => { /* буфер недоступний — нічого не робимо, посилання видно в адресі */ });
+  };
+
   const handleContact = () => {
+    if (askForSize()) return;
     haptic('medium');
-    trackCatalogEvent('contact_click', product.productnumber, { channel: 'telegram' });
-    contactSeller(sellerUsername, product.productnumber);
+    const chosen = product.size_variants.find((v) => v.id === sizeId);
+    trackCatalogEvent('contact_click', product.productnumber,
+      { channel: 'telegram', size: chosen ? variantLabel(chosen) : undefined });
+    contactSeller(sellerUsername, orderMessage());
   };
 
   // ♥️ на сторінці товару: перемикаємо обране й оновлюємо лічильник у стані картки
@@ -422,6 +494,10 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   const variantLabel = (v: typeof product.size_variants[number]): string =>
     v.sizeeu ? `${v.sizeeu} EU` : v.size_letter ?? (v.measurementscm ? `${v.measurementscm} см` : 'один розмір');
 
+  // Вибір показуємо лише там, де є з чого вибирати (ростовка). Один розмір лишається
+  // інформаційною пігулкою — зайвий крок на шляху до замовлення нікому не потрібен.
+  const pickable = product.size_variants.length > 1;
+
   const materialRows = MATERIAL_ORDER
     .filter((position) => product.materials[position]?.length)
     .map((position) => [MATERIAL_LABELS[position],
@@ -450,8 +526,11 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
         <div className="gallery-track" ref={trackRef} onScroll={handleScroll}>
           {product.images.length > 0 ? product.images.map((img, i) => (
             <div className="gallery-slide" key={img.url}>
+              {/* Тап по фото — повноекранний перегляд із зумом: для стоку й вживаного
+                  можливість роздивитися потертість і є вирішальним аргументом. */}
               <img src={img.url} alt={titleText} decoding="async"
-                loading={i === 0 ? 'eager' : 'lazy'} />
+                loading={i === 0 ? 'eager' : 'lazy'}
+                onClick={() => { haptic('light'); setZoomAt(i); }} />
               {KIND_LABELS[img.kind] && <span className="kind-tag">{KIND_LABELS[img.kind]}</span>}
             </div>
           )) : <div className="gallery-slide">Без фото</div>}
@@ -494,6 +573,13 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
                 {(product.fav_count ?? 0) > 0 ? `${product.fav_count} в обраному` : 'В обране'}
               </button>
             )}
+            {/* Поділитися: у Telegram — нативний вибір чату, поза ним — системне
+                «Поділитися», а якщо його нема (десктоп) — копіювання посилання. */}
+            <button type="button" className="fav-line" onClick={handleShare}
+              title="Поділитися посиланням на товар">
+              <ShareIcon />
+              {shared ? 'Скопійовано ✓' : 'Поділитися'}
+            </button>
             {admin && (
               <span className="views-line" title="Переглядів цієї картки покупцями">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -506,16 +592,28 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
         </div>
 
         {product.size_variants.length > 0 && (
-          <div className="detail-card">
-            <h3>Розміри в наявності</h3>
+          <div className={`detail-card${sizesFlash ? ' flash' : ''}`} ref={sizesRef}>
+            <h3>{pickable ? 'Оберіть розмір' : 'Розміри в наявності'}</h3>
             <div className="filter-options">
               {product.size_variants.map((variant) => (
-                <span className="size-pill" key={variant.id}>
-                  {variantLabel(variant)}
-                  {variant.measurementscm && variant.sizeeu && (
-                    <span className="option-count">{variant.measurementscm} см</span>
-                  )}
-                </span>
+                pickable ? (
+                  <button type="button" key={variant.id}
+                    className={`size-pill pickable${sizeId === variant.id ? ' on' : ''}`}
+                    aria-pressed={sizeId === variant.id}
+                    onClick={() => { haptic('light'); setSizeId(variant.id); setSizesFlash(false); }}>
+                    {variantLabel(variant)}
+                    {variant.measurementscm && variant.sizeeu && (
+                      <span className="option-count">{variant.measurementscm} см</span>
+                    )}
+                  </button>
+                ) : (
+                  <span className="size-pill" key={variant.id}>
+                    {variantLabel(variant)}
+                    {variant.measurementscm && variant.sizeeu && (
+                      <span className="option-count">{variant.measurementscm} см</span>
+                    )}
+                  </span>
+                )
               ))}
             </div>
           </div>
@@ -579,7 +677,21 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
             ))}
           </div>
         )}
+
+        {/* Просто над кнопкою «Замовити» — саме тут у покупця виникають питання
+            «а як платити?» і «що як не підійде?», через які він і не пише. */}
+        {onHowToBuy && (
+          <button type="button" className="how-to-buy" onClick={() => { haptic('light'); onHowToBuy(); }}>
+            Оплата, доставка та обмін
+            <ChevronIcon dir="right" />
+          </button>
+        )}
       </div>
+
+      {zoomAt !== null && product.images.length > 0 && (
+        <Lightbox images={product.images} index={zoomAt} alt={titleText}
+          onClose={() => setZoomAt(null)} />
+      )}
 
       {(sellerUsername || sellerPhone || sellerInstagram || sellerViber) && (
         <div className="contact-bar">
@@ -615,6 +727,14 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     </div>
   );
 };
+
+const ShareIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+    <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+  </svg>
+);
 
 const HeartIcon = ({ filled }: { filled?: boolean }) => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'}

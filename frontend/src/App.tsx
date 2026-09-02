@@ -1,6 +1,7 @@
 // TG Shop — каталог: пошук, фільтри, сітка товарів, сторінка товару
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { CatalogItem, CatalogQuery, Facets, FilterOptions, fetchConfig, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, syncFavorites } from './api';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { CatalogItem, CatalogQuery, Facets, FilterOptions, ShopInfoSection, fetchConfig, formatPrice, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, syncFavorites } from './api';
+import { HowToBuySheet } from './components/HowToBuySheet';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
 import { ReorderSheet } from './components/ReorderSheet';
 import { ProductCard, SkeletonCard } from './components/ProductCard';
@@ -8,6 +9,7 @@ import { ProductPage } from './components/ProductPage';
 import { useCatalog, useDebounced } from './hooks/useCatalog';
 import { useFavorites } from './useFavorites';
 import { trackCatalogEvent } from './analytics';
+import { idFromPath, initialProductId, pushProduct, replaceProduct, seedHistoryForDeepLink } from './deepLink';
 import { ADMIN_TOKEN_KEY, clearAdminToken, currentTheme, haptic, hapticSelect, hydrateAdminTokenFromCloud, initDataRaw, openChannel, saveAdminTokenEverywhere, telegramUserId, toggleTheme } from './telegram';
 
 // Адмін-режим (бачить тумблер «з фото» тощо): Telegram ID у allowlist або ?admin=1
@@ -42,13 +44,17 @@ export const App = () => {
   );
   const [filterOptions, setFilterOptions] = useState<FilterOptions | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
-  const [productId, setProductId] = useState<number | null>(null);
+  // Прямий вхід за посиланням (/t/<id> або ?startapp=<id> у Telegram) — товар
+  // відкривається одразу, ще до того, як довантажиться сітка каталогу.
+  const [productId, setProductId] = useState<number | null>(initialProductId);
   const [sellerUsername, setSellerUsername] = useState('');
   const [sellerPhone, setSellerPhone] = useState('');
   const [sellerInstagram, setSellerInstagram] = useState('');
   const [sellerViber, setSellerViber] = useState('');
   const [tgChannel, setTgChannel] = useState('');
   const [shopName, setShopName] = useState('Каталог');
+  const [howToBuy, setHowToBuy] = useState<ShopInfoSection[]>([]);
+  const [infoOpen, setInfoOpen] = useState(false);   // екран «Як купити»
   const [isAdmin, setIsAdmin] = useState(hasAdminParam);
   const [adminWrites, setAdminWrites] = useState(false);   // чи бекенд дозволяє адмін-запис
   // Фасети наперед: щоб лист фільтрів одразу показував коректні (звужені)
@@ -126,10 +132,8 @@ export const App = () => {
       setSellerInstagram(config.seller_instagram);
       setSellerViber(config.seller_viber);
       setTgChannel(config.tg_channel || '');
-      if (config.shop_name) {
-        setShopName(config.shop_name);
-        document.title = config.shop_name;
-      }
+      if (config.shop_name) setShopName(config.shop_name);
+      setHowToBuy(config.how_to_buy ?? []);
       setAdminWrites(config.admin_writes);
       // Адмін, якщо Telegram ID у allowlist (або вже за ?admin=1)
       if (telegramUserId && config.admin_tg_ids.includes(telegramUserId)) setIsAdmin(true);
@@ -245,6 +249,21 @@ export const App = () => {
     return [...ordered, ...items.filter((i) => !i.featured)];
   }, [items, featOrder, isAdmin]);
 
+  // Кураторський блок. Рекомендовані спливають угору лише при сортуванні «Новинки»
+  // (див. catalog.py) — тоді вони йдуть суцільною групою, і плашка «Рекомендований»
+  // на КОЖНІЙ картці перетворювала перший екран на стіну однакових написів. Замість
+  // повторюваної плашки — один заголовок над групою: та сама інформація, сказана раз.
+  // У пошуку заголовок недоречний (там інший намір), при сортуванні за ціною групи
+  // взагалі немає — там плашка на картці лишається доречною.
+  const pinnedView = (query.sort ?? 'newest') === 'newest' && !effSearch && !favView;
+  const featuredHead = useMemo(() => {
+    if (!pinnedView || !displayItems[0]?.featured) return 0;
+    const rest = displayItems.findIndex((i) => !i.featured);
+    return rest === -1 ? displayItems.length : rest;
+  }, [pinnedView, displayItems]);
+  // Один рекомендований групою не є — заголовок тоді лише заважав би
+  const showSections = featuredHead > 1;
+
   // Список рекомендованих для панелі (у поточному порядку показу)
   const featuredItems = useMemo(() => displayItems.filter((i) => i.featured), [displayItems]);
 
@@ -279,9 +298,41 @@ export const App = () => {
     };
   }, [loadMore, items]);
 
+  // Адреса ↔ відкрита картка. Крок «назад» (кнопка Telegram, свайп, кнопка браузера)
+  // приходить сюди як popstate — і саме він закриває картку.
+  useEffect(() => {
+    const opened = initialProductId();
+    if (opened !== null) seedHistoryForDeepLink(opened);   // під картку — крок «каталог»
+    const onPop = () => setProductId(idFromPath());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // Заголовок вкладки. На прямому посиланні сервер уже віддав назву товару — не
+  // затираємо її назвою магазину, а тримаємо в синхроні з тим, що зараз відкрито.
+  useEffect(() => {
+    if (productId === null) document.title = shopName;
+    else {
+      // Формат той самий, що віддає сервер у мета-тегах, — щоб на прямому
+      // посиланні заголовок вкладки не «смикався» після завантаження застосунку
+      const it = items.find((x) => x.id === productId);
+      if (it) {
+        const shown = it.sale_price != null && it.sale_price < it.price ? it.sale_price : it.price;
+        document.title = `${[it.brand, it.model].filter(Boolean).join(' ')} — ${formatPrice(shown)} | ${shopName}`;
+      }
+    }
+  }, [productId, shopName, items]);
+
   const handleOpenProduct = (id: number) => {
     haptic('light');
+    pushProduct(id, productTitle(id));   // адреса товару — щоб посилання можна було дати
     setProductId(id);   // картка — оверлей поверх каталогу; скрол каталогу зберігається
+  };
+
+  // Назва для «людського» хвоста адреси (/t/170331-ecco-street-1)
+  const productTitle = (id: number): string | undefined => {
+    const it = items.find((x) => x.id === id);
+    return it ? [it.brand, it.model].filter(Boolean).join(' ') : undefined;
   };
 
   // Тап по ♥️: перемикаємо обране (оптимістично) і оновлюємо публічний лічильник
@@ -370,7 +421,7 @@ export const App = () => {
             <input
               ref={searchRef}
               type="search"
-              placeholder={`Пошук у «${shopName}»`}
+              placeholder="Пошук у каталозі"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               aria-label="Пошук товарів"
@@ -491,18 +542,34 @@ export const App = () => {
           if (viewsMap[item.productnumber] != null) merged.views = viewsMap[item.productnumber];
           if (favCounts[item.productnumber] != null) merged.fav_count = favCounts[item.productnumber];
           return (
-          <ProductCard key={item.id} priority={i < 4}
-            item={merged}
-            onOpen={handleOpenProduct}
-            isFav={isFav(item.productnumber)} onToggleFav={handleToggleFav}
-            admin={isAdmin} onTogglePublish={adminWrites ? handleTogglePublish : undefined}
-            onToggleFeatured={adminWrites ? handleToggleFeatured : undefined}
-            onOpenReorder={adminWrites ? () => setReorderOpen(true) : undefined} />
+          <Fragment key={item.id}>
+            {showSections && i === 0 && <h2 className="grid-section">Рекомендовані</h2>}
+            {showSections && i === featuredHead && <h2 className="grid-section">Усі товари</h2>}
+            <ProductCard priority={i < 4}
+              item={merged}
+              onOpen={handleOpenProduct}
+              isFav={isFav(item.productnumber)} onToggleFav={handleToggleFav}
+              admin={isAdmin} onTogglePublish={adminWrites ? handleTogglePublish : undefined}
+              onToggleFeatured={adminWrites ? handleToggleFeatured : undefined}
+              onOpenReorder={adminWrites ? () => setReorderOpen(true) : undefined}
+              /* Заголовок групи вже сказав це — плашка на кожній картці була б повтором */
+              hideFeaturedBadge={showSections} />
+          </Fragment>
           );
         })}
         {isLoading && items.length === 0 && Array.from({ length: 6 }, (_, i) => <SkeletonCard key={`sk-${i}`} />)}
       </main>
       <div className="load-sentinel" ref={sentinelRef} />
+
+      {/* Підвал: те, що покупець шукає, догортавши до кінця, — хто ви й як купити */}
+      {howToBuy.length > 0 && (
+        <footer className="shop-footer">
+          <button type="button" className="footer-link"
+            onClick={() => { haptic('light'); setInfoOpen(true); }}>
+            Оплата, доставка та обмін
+          </button>
+        </footer>
+      )}
 
       {isSheetOpen && filterOptions && (
         <FilterSheet
@@ -538,7 +605,13 @@ export const App = () => {
         <ProductPage
           productId={productId}
           siblingIds={items.map((it) => it.id)}
-          onNavigate={(id) => { haptic('light'); setProductId(id); }}
+          onNavigate={(id) => {
+            haptic('light');
+            // Гортання свайпом — ЗАМІНА кроку історії, а не новий: інакше «назад»
+            // довелося б тиснути стільки разів, скільки карток пролистали.
+            replaceProduct(id, productTitle(id));
+            setProductId(id);
+          }}
           onNeedMore={loadMore}
           isFavorite={isFav}
           onToggleFav={(pn) => { haptic('light'); return toggleFav(pn); }}
@@ -549,8 +622,14 @@ export const App = () => {
           sellerInstagram={sellerInstagram}
           sellerViber={sellerViber}
           admin={isAdmin}
-          onBack={() => setProductId(null)}
+          onHowToBuy={howToBuy.length > 0 ? () => setInfoOpen(true) : undefined}
+          onBack={() => window.history.back()}   // адресу знімає popstate нижче
         />
+      )}
+
+      {infoOpen && (
+        <HowToBuySheet sections={howToBuy} sellerUsername={sellerUsername}
+          onClose={() => setInfoOpen(false)} />
       )}
 
       {/* Токен адмін-доступу (поза Telegram): власна модалка замість window.prompt —

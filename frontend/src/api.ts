@@ -186,9 +186,14 @@ export const fetchProduct = (id: number, admin = false): Promise<ProductDetail> 
 export const fetchViews = (): Promise<Record<string, number>> =>
   fetchJson<{ views: Record<string, number> }>(`/api/catalog/views`).then((r) => r.views || {});
 
+// Блок екрана «Як купити» (оплата, доставка, обмін). draft — непідтверджений
+// власником; покупцям бекенд такі блоки не віддає взагалі.
+export type ShopInfoSection = { title: string; items: string[]; draft?: boolean };
+
 export const fetchConfig = (): Promise<{
   seller_username: string; seller_phone: string; seller_instagram: string; seller_viber: string;
   tg_channel: string; shop_name: string; admin_tg_ids: number[]; admin_writes: boolean;
+  how_to_buy?: ShopInfoSection[];
 }> => fetchJson('/api/config');
 
 // ── Адмін-запис публікації (Фаза 2) — захищений: Telegram initData АБО адмін-токен ──

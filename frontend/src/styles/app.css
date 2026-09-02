@@ -192,6 +192,34 @@ button {
 }
 .size-pill .option-count { color: var(--fg-subtle); font-weight: 400; }
 
+/* Ростовка: пігулка стає кнопкою вибору. Обраний розмір — інверсія (як активний чіп
+   сортування), щоб вибір читався з відстані витягнутої руки. */
+.size-pill.pickable {
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.size-pill.pickable:active { transform: scale(0.95); }
+.size-pill.pickable.on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+.size-pill.pickable.on::before { background: var(--on-primary); }
+.size-pill.pickable.on .option-count { color: var(--on-primary); opacity: 0.7; }
+
+/* «Оберіть розмір»: тап по «Замовити» без вибору прокручує сюди й підсвічує блок */
+.detail-card.flash {
+  animation: card-flash 1.6s var(--ease);
+}
+@keyframes card-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  15%, 60% { box-shadow: 0 0 0 2px var(--primary); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .detail-card.flash { animation: none; box-shadow: 0 0 0 2px var(--primary); }
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
@@ -263,6 +291,20 @@ button {
   gap: var(--space-3);
   padding: var(--space-2) var(--space-4) var(--space-6);
 }
+
+/* Заголовок групи в сітці («Рекомендовані» / «Усі товари»): на всю ширину рядка,
+   незалежно від кількості колонок — тому 1 / -1, а не фіксоване число. */
+.grid-section {
+  grid-column: 1 / -1;
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+}
+/* Перший заголовок стоїть одразу під лічильником товарів — зайвий відступ не потрібен */
+.grid-section:first-child { margin-top: 0; }
 
 /* Ширші екрани (десктопний Telegram/браузер): адаптивна кількість колонок */
 @media (min-width: 640px) {
@@ -477,7 +519,7 @@ button {
   background: var(--surface-alt);
   color: var(--fg);
   font: inherit;
-  font-size: var(--text-base);
+  font-size: var(--text-md);   /* 16px: інакше iOS зумить сторінку при фокусі */
 }
 .desc-edit:focus { outline: none; border-color: var(--fg-muted); }
 .desc-save {
@@ -751,7 +793,7 @@ button {
   background: var(--surface-alt);
   color: var(--fg);
   font: inherit;
-  font-size: var(--text-base);
+  font-size: var(--text-md);   /* 16px: менший розмір змушує iOS зумити при фокусі */
   margin-bottom: var(--space-3);
 }
 .token-input:focus { outline: none; border-color: var(--fg-muted); }
@@ -819,6 +861,219 @@ button {
   .sheet-footer {
     padding-bottom: var(--space-3);
   }
+}
+
+/* ── «Як купити»: оплата, доставка, обмін ───────────────────────────────────
+   Лист, а не окрема сторінка: питання виникає посеред вибору, і покупця не варто
+   виривати з контексту. На десктопі — по центру (на відміну від фільтрів, які
+   там стають боковою панеллю: це довідка, а не інструмент роботи зі списком). */
+.info-sheet { max-height: 82vh; }
+
+@media (min-width: 768px) {
+  .info-sheet {
+    left: 50%;
+    right: auto;
+    top: 50%;
+    bottom: auto;
+    transform: translate(-50%, -50%);
+    width: min(520px, calc(100vw - 64px));
+    max-height: 80vh;
+    border-radius: var(--radius-md);
+    animation: fade-in var(--dur-med) var(--ease);
+  }
+}
+
+.info-body { padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom)); }
+
+.info-block + .info-block { margin-top: var(--space-4); }
+.info-block h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--fg);
+}
+.info-block ul { margin: 0; padding-left: 18px; }
+.info-block li {
+  margin-bottom: 5px;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+.info-block li::marker { color: var(--fg-faint); }
+
+/* Позначка непідтвердженого блоку — бачить лише власник (SHOP_INFO_DRAFT=1) */
+.info-draft {
+  padding: 2px 7px;
+  border: 1px dashed var(--fg-faint);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--fg-subtle);
+}
+
+.info-tail {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-sm);
+  color: var(--fg-subtle);
+}
+
+/* Вхід зі сторінки товару — рядок просто над кнопкою «Замовити» */
+.how-to-buy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: var(--space-2);
+  padding: 13px var(--space-4);
+  margin-top: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.how-to-buy:hover { border-color: var(--fg-faint); }
+.how-to-buy svg { flex: none; color: var(--fg-subtle); }
+
+/* Вхід із кінця сітки — для тих, хто догортав і шукає, з ким має справу */
+.shop-footer {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-6) var(--space-4) calc(var(--space-6) + env(safe-area-inset-bottom));
+}
+.footer-link {
+  padding: 9px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.footer-link:hover { color: var(--fg); border-color: var(--fg-faint); }
+
+/* ── Повноекранний перегляд фото з масштабуванням ───────────────────────────
+   Один набір жестів на Pointer Events обслуговує і палець, і мишу; тут — лише
+   те, що в них РІЗНЕ: підказка, курсори, стрілки й розміри елементів керування. */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 70;                 /* поверх картки (40) і листів (51) */
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fade-in var(--dur-med) var(--ease);
+}
+
+.lightbox-stage {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;          /* жести обробляємо самі, браузер не втручається */
+  cursor: zoom-in;
+}
+.lightbox-stage.zoomed { cursor: grab; }
+.lightbox-stage.zoomed:active { cursor: grabbing; }
+
+.lightbox-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  will-change: transform;
+}
+
+.lightbox-close,
+.lightbox-arrow {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  /* Підкладка ТЕМНА, а не світла: фото товарів студійні, на білому тлі — на ньому
+     світлі напівпрозорі кнопки просто зникали. Темна читається на обох. */
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  backdrop-filter: blur(6px);
+  transition: background var(--dur-fast) var(--ease);
+}
+.lightbox-close:hover,
+.lightbox-arrow:hover { background: rgba(0, 0, 0, 0.75); }
+
+.lightbox-close {
+  top: calc(var(--space-3) + env(safe-area-inset-top));
+  right: var(--space-3);
+  width: 40px;
+  height: 40px;
+  font-size: 17px;
+}
+
+.lightbox-counter {
+  position: absolute;
+  top: calc(var(--space-4) + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(6px);
+}
+
+.lightbox-hint {
+  position: absolute;
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
+/* Стрілки — лише там, де є курсор: на телефоні гортають свайпом, і кнопки
+   лише крали б місце в кадрі. */
+.lightbox-arrow { display: none; }
+
+@media (hover: hover) and (pointer: fine) {
+  .lightbox-arrow {
+    display: flex;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 46px;
+    height: 46px;
+    font-size: 30px;
+    line-height: 1;
+    padding-bottom: 4px;
+  }
+  .lightbox-arrow.prev { left: var(--space-4); }
+  .lightbox-arrow.next { right: var(--space-4); }
+}
+
+/* Фото в галереї картки — курсор підказує, що його можна відкрити */
+.gallery-slide img { cursor: zoom-in; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lightbox { animation: none; }
 }
 
 /* Зона біля лівого краю екрана — наведення курсору відкриває фільтри (десктоп) */

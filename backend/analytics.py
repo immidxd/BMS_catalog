@@ -14,12 +14,13 @@ import os
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from auth import telegram_user_from_init_data
 from database import get_db
+import orders_sheet
 
 router = APIRouter()
 
@@ -140,12 +141,18 @@ def _clean_metadata(event_type: str, metadata: Any) -> Dict[str, str]:
         return {}
     if event_type == "contact_click":
         channel = str(metadata.get("channel") or "").lower().strip()
-        return {"channel": channel} if channel in CONTACT_CHANNELS else {}
+        if channel not in CONTACT_CHANNELS:
+            return {}
+        # Обраний розмір — щоб бачити, за якими розмірами реально пишуть (і чи взагалі
+        # доходять до вибору). Довжину ріжемо: це підпис пігулки, а не вільний текст.
+        size = str(metadata.get("size") or "").strip()[:32]
+        return {"channel": channel, **({"size": size} if size else {})}
     return {}
 
 
 @router.post("/api/analytics/events")
 async def record_event(
+    background: BackgroundTasks,
     payload: Dict[str, Any] = Body(...),
     x_catalog_visitor: Optional[str] = Header(None),
     x_catalog_session: Optional[str] = Header(None),
@@ -186,6 +193,12 @@ async def record_event(
         "session_id": session_id,
         "metadata": json.dumps(meta),
     }).scalar()
+
+    # Клік «Замовити» → рядок у документі власника «Замовлення». У ФОНІ: покупець
+    # не має чекати на Google, а збій там не повинен ламати відповідь каталогу.
+    if event_type == "contact_click" and pnum and orders_sheet.enabled():
+        background.add_task(orders_sheet.handle_contact_click,
+                            session_id, pnum.lstrip("#"), meta.get("size"))
 
     # Keep the old admin badge compatible, but increment it only for a genuine,
     # deduplicated active-card view. Historical inflated values are preserved as legacy.
