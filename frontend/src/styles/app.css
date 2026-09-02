@@ -871,24 +871,43 @@ button {
 
 .info-body { padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom)); }
 
-.info-block + .info-block { margin-top: var(--space-4); }
+/* Блоки розділяємо повітрям і тонкою лінією, а не порожніми абзацами: так видно
+   межу розділу навіть коли текст короткий. */
+.info-block + .info-block {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
 .info-block h3 {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-base);
+  gap: 7px;
+  margin: 0 0 5px;
+  font-size: var(--text-xs);
   font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+}
+.info-block h3 svg { flex: none; }
+
+/* Головна відповідь блоку — те, заради чого людина відкрила екран */
+.info-lead {
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: 1.4;
   color: var(--fg);
 }
-.info-block ul { margin: 0; padding-left: 18px; }
+
+/* Деталі: дрібніші, приглушені, без крапок-маркерів — маркери в довгому списку
+   створюють зайвий вертикальний шум і роблять текст «важчим». */
+.info-block ul { margin: 6px 0 0; padding: 0; list-style: none; }
 .info-block li {
-  margin-bottom: 5px;
+  margin-bottom: 3px;
   font-size: var(--text-sm);
-  line-height: 1.5;
-  color: var(--fg-muted);
+  line-height: 1.45;
+  color: var(--fg-subtle);
 }
-.info-block li::marker { color: var(--fg-faint); }
 
 /* Позначка непідтвердженого блоку — бачить лише власник (SHOP_INFO_DRAFT=1) */
 .info-draft {
@@ -1240,7 +1259,7 @@ button {
   cursor: not-allowed;
   pointer-events: none;
 }
-.color-swatch.unavail:hover { transform: none; box-shadow: 0 0 0 1px var(--border); }
+.color-swatch.unavail:hover { transform: none; box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.38); }
 
 /* ── Чіпи статі — іконки з кольоровим відтінком при активації (як у BMS) ──── */
 .gender-chips { display: flex; gap: var(--space-2); }
@@ -1307,12 +1326,14 @@ button {
   width: 100%;
   aspect-ratio: 1;
   border-radius: var(--radius-md);
-  /* Нейтральна темозалежна обводка: біле кільце на темній темі робило з чорного
-     кольору «артефакт». var(--border) делікатно окреслює квадрат у будь-якій темі. */
-  box-shadow: 0 0 0 1px var(--border);
+  /* Обводка ВСЕРЕДИНІ квадрата, а не зовні. Зовнішнє кільце (навіть нейтральне)
+     на чорному зразку світліше і за сам колір, і за тло картки — читалось як
+     ореол-артефакт. Інсет лише окреслює край: напівпрозорий сірий однаково
+     делікатний і на чорному, і на білому, і в обох темах. */
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.38);
   transition: box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
-.color-swatch:hover { box-shadow: 0 0 0 1px var(--fg-subtle); }
+.color-swatch:hover { box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.7); }
 .color-swatch:active { transform: scale(0.93); }
 /* Активний — кільце кольору бренду з відступом */
 .color-swatch.active,

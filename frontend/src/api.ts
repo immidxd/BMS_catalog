@@ -188,7 +188,13 @@ export const fetchViews = (): Promise<Record<string, number>> =>
 
 // Блок екрана «Як купити» (оплата, доставка, обмін). draft — непідтверджений
 // власником; покупцям бекенд такі блоки не віддає взагалі.
-export type ShopInfoSection = { title: string; items: string[]; draft?: boolean };
+export type ShopInfoSection = {
+  key?: string;        // веде до іконки на фронтенді (не за назвою — щоб правка заголовка не лишила блок без іконки)
+  title: string;
+  lead?: string;       // головна відповідь блоку — її видно з першого погляду
+  items: string[];     // деталі дрібнішим
+  draft?: boolean;
+};
 
 export const fetchConfig = (): Promise<{
   seller_username: string; seller_phone: string; seller_instagram: string; seller_viber: string;
