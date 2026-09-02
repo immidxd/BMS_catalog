@@ -6,3 +6,5 @@ python-dotenv>=1.0
 # Запис намірів замовлення в Google Sheets (orders_sheet.py)
 gspread>=6.0
 google-auth>=2.28
+# База часових поясів: у python:slim її немає, а дата замовлення має бути київська
+tzdata>=2024.1

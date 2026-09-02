@@ -41,7 +41,7 @@ import os
 import re
 import threading
 import time
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,18 @@ def enabled() -> bool:
     return (os.getenv("CATALOG_ORDERS_SHEET", "").strip().lower() in ("1", "true", "yes", "on")
             and bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON"))
             and bool(os.getenv("ORDERS_SPREADSHEET_ID")))
+
+
+def _today() -> str:
+    """Сьогодні за КИЄВОМ, а не за часом контейнера. Хостинг живе в UTC, і
+    замовлення з 00:00 до 03:00 за Києвом лягали б у документ учорашньою датою —
+    а він у власника впорядкований саме київськими днями (ефірами)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Europe/Kyiv")).strftime("%Y-%m-%d")
+    except Exception:
+        # tzdata недоступна — беремо UTC+3 (літній час), це ближче за UTC
+        return (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d")
 
 
 def _blank(value: Any) -> bool:
@@ -213,7 +225,7 @@ def _values(numbers: List[str], prices: List[str], details: List[str],
         COL_DETAILS: _join(details),
         COL_STATUS: INTENT_STATUS,
         COL_COMMENT: CATALOG_MARK,
-        COL_DATE: date.today().strftime("%Y-%m-%d"),
+        COL_DATE: _today(),
     }
     # Порожніми контактами НЕ затираємо те, що менеджер уже вписав руками
     if buyer and buyer.get("name"):
@@ -227,7 +239,7 @@ def _is_ours(layout: _Layout, row: int) -> bool:
     """Чи цей рядок створили МИ і його ще не змінив власник."""
     return (layout.cell(row, COL_COMMENT).upper() == CATALOG_MARK
             and layout.cell(row, COL_STATUS).upper() == INTENT_STATUS
-            and layout.cell(row, COL_DATE) == date.today().strftime("%Y-%m-%d"))
+            and layout.cell(row, COL_DATE) == _today())
 
 
 # ── Памʼять «свого» рядка на час заходу відвідувача ──────────────────────────
