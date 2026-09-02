@@ -140,7 +140,12 @@ def _clean_metadata(event_type: str, metadata: Any) -> Dict[str, str]:
         return {}
     if event_type == "contact_click":
         channel = str(metadata.get("channel") or "").lower().strip()
-        return {"channel": channel} if channel in CONTACT_CHANNELS else {}
+        if channel not in CONTACT_CHANNELS:
+            return {}
+        # Обраний розмір — щоб бачити, за якими розмірами реально пишуть (і чи взагалі
+        # доходять до вибору). Довжину ріжемо: це підпис пігулки, а не вільний текст.
+        size = str(metadata.get("size") or "").strip()[:32]
+        return {"channel": channel, **({"size": size} if size else {})}
     return {}
 
 

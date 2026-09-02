@@ -192,6 +192,34 @@ button {
 }
 .size-pill .option-count { color: var(--fg-subtle); font-weight: 400; }
 
+/* Ростовка: пігулка стає кнопкою вибору. Обраний розмір — інверсія (як активний чіп
+   сортування), щоб вибір читався з відстані витягнутої руки. */
+.size-pill.pickable {
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.size-pill.pickable:active { transform: scale(0.95); }
+.size-pill.pickable.on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+.size-pill.pickable.on::before { background: var(--on-primary); }
+.size-pill.pickable.on .option-count { color: var(--on-primary); opacity: 0.7; }
+
+/* «Оберіть розмір»: тап по «Замовити» без вибору прокручує сюди й підсвічує блок */
+.detail-card.flash {
+  animation: card-flash 1.6s var(--ease);
+}
+@keyframes card-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  15%, 60% { box-shadow: 0 0 0 2px var(--primary); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .detail-card.flash { animation: none; box-shadow: 0 0 0 2px var(--primary); }
+}
+
 .chip {
   display: inline-flex;
   align-items: center;

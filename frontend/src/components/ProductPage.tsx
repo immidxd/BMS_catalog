@@ -335,8 +335,20 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   const [slide, setSlide] = useState(0);
   const [copied, setCopied] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
+  // Обраний розмір їде в текст замовлення. Коли розмір один — беремо його одразу
+  // (питати нема про що); коли їх кілька — покупець мусить обрати, інакше менеджер
+  // отримає запит без найголовнішого і почне діалог з уточнення.
+  const [sizeId, setSizeId] = useState<number | null>(null);
+  const sizesRef = useRef<HTMLDivElement>(null);
+  const [sizesFlash, setSizesFlash] = useState(false);   // підсвітка «оберіть розмір»
 
   useEffect(() => { setSlide(0); trackRef.current?.scrollTo({ left: 0 }); }, [product.id]);
+
+  // Скидаємо вибір при переході на інший товар; єдиний розмір — обираємо самі
+  useEffect(() => {
+    setSizesFlash(false);
+    setSizeId(product.size_variants.length === 1 ? product.size_variants[0].id : null);
+  }, [product.id, product.size_variants]);
 
   const handleScroll = () => {
     const track = trackRef.current;
@@ -354,10 +366,40 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     trackRef.current?.scrollTo({ left: next * (trackRef.current?.clientWidth ?? 0), behavior: 'smooth' });
   };
 
+  // Розмірів кілька, а вибору ще нема — вести в чат зарано: підсвічуємо блок розмірів
+  // і прокручуємо до нього. Це м'якше за заблоковану кнопку, яка нічого не пояснює.
+  const askForSize = (): boolean => {
+    if (product.size_variants.length <= 1 || sizeId != null) return false;
+    haptic('light');
+    sizesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setSizesFlash(true);
+    setTimeout(() => setSizesFlash(false), 1600);
+    return true;
+  };
+
+  // Повідомлення менеджеру: назва, номер, розмір і ціна — щоб діалог починався з
+  // домовленості, а не з двох уточнювальних питань з обох боків.
+  const orderMessage = (): string => {
+    const chosen = product.size_variants.find((v) => v.id === sizeId);
+    const price = onSale && priceOriginal
+      ? `${formatPrice(shownPrice)} (замість ${formatPrice(priceOriginal)})`   // formatPrice уже дає «грн»
+      : formatPrice(shownPrice);
+    return [
+      'Доброго дня! Цікавить товар:',
+      '',
+      `${titleText} — ${product.productnumber}`,
+      chosen ? `Розмір: ${variantLabel(chosen)}` : null,
+      `Ціна: ${price}`,
+    ].filter((l) => l !== null).join('\n');
+  };
+
   const handleContact = () => {
+    if (askForSize()) return;
     haptic('medium');
-    trackCatalogEvent('contact_click', product.productnumber, { channel: 'telegram' });
-    contactSeller(sellerUsername, product.productnumber);
+    const chosen = product.size_variants.find((v) => v.id === sizeId);
+    trackCatalogEvent('contact_click', product.productnumber,
+      { channel: 'telegram', size: chosen ? variantLabel(chosen) : undefined });
+    contactSeller(sellerUsername, orderMessage());
   };
 
   // ♥️ на сторінці товару: перемикаємо обране й оновлюємо лічильник у стані картки
@@ -421,6 +463,10 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   // Підпис розміру варіанта: EU → літерний → устілка в см
   const variantLabel = (v: typeof product.size_variants[number]): string =>
     v.sizeeu ? `${v.sizeeu} EU` : v.size_letter ?? (v.measurementscm ? `${v.measurementscm} см` : 'один розмір');
+
+  // Вибір показуємо лише там, де є з чого вибирати (ростовка). Один розмір лишається
+  // інформаційною пігулкою — зайвий крок на шляху до замовлення нікому не потрібен.
+  const pickable = product.size_variants.length > 1;
 
   const materialRows = MATERIAL_ORDER
     .filter((position) => product.materials[position]?.length)
@@ -506,16 +552,28 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
         </div>
 
         {product.size_variants.length > 0 && (
-          <div className="detail-card">
-            <h3>Розміри в наявності</h3>
+          <div className={`detail-card${sizesFlash ? ' flash' : ''}`} ref={sizesRef}>
+            <h3>{pickable ? 'Оберіть розмір' : 'Розміри в наявності'}</h3>
             <div className="filter-options">
               {product.size_variants.map((variant) => (
-                <span className="size-pill" key={variant.id}>
-                  {variantLabel(variant)}
-                  {variant.measurementscm && variant.sizeeu && (
-                    <span className="option-count">{variant.measurementscm} см</span>
-                  )}
-                </span>
+                pickable ? (
+                  <button type="button" key={variant.id}
+                    className={`size-pill pickable${sizeId === variant.id ? ' on' : ''}`}
+                    aria-pressed={sizeId === variant.id}
+                    onClick={() => { haptic('light'); setSizeId(variant.id); setSizesFlash(false); }}>
+                    {variantLabel(variant)}
+                    {variant.measurementscm && variant.sizeeu && (
+                      <span className="option-count">{variant.measurementscm} см</span>
+                    )}
+                  </button>
+                ) : (
+                  <span className="size-pill" key={variant.id}>
+                    {variantLabel(variant)}
+                    {variant.measurementscm && variant.sizeeu && (
+                      <span className="option-count">{variant.measurementscm} см</span>
+                    )}
+                  </span>
+                )
               ))}
             </div>
           </div>

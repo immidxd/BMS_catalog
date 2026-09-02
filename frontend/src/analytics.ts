@@ -41,7 +41,7 @@ export const analyticsHeaders = (): Record<string, string> => ({
 export const trackCatalogEvent = (
   eventType: CatalogEventType,
   productnumber?: string,
-  metadata?: { channel?: 'telegram' | 'phone' | 'instagram' | 'viber' },
+  metadata?: { channel?: 'telegram' | 'phone' | 'instagram' | 'viber'; size?: string },
 ): void => {
   const initData = initDataRaw();
   const headers: Record<string, string> = {

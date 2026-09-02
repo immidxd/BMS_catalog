@@ -106,9 +106,10 @@ export const showBackButton = (onBack: () => void): (() => void) => {
 };
 
 // Відкрити чат з менеджером із підставленою чернеткою замовлення
-export const contactSeller = (username: string, productnumber: string): void => {
-  const message = encodeURIComponent(`Мене цікавить ${productnumber}`);
-  const url = `https://t.me/${username}?text=${message}`;
+// Готовий текст замовлення складає сторінка товару (назва, номер, розмір, ціна) —
+// менеджер одразу бачить, про що мова, і діалог починається з домовленості.
+export const contactSeller = (username: string, message: string): void => {
+  const url = `https://t.me/${username}?text=${encodeURIComponent(message)}`;
   if (isInTelegram) tg!.openTelegramLink(url);
   else window.open(url, '_blank');
 };
