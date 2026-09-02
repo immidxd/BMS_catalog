@@ -3,7 +3,8 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { AdminAuth, ProductDetail, cap, capSlash, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
 import { parseTechnologies } from '../techLogos';
-import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, showBackButton } from '../telegram';
+import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, shareViaTelegram, showBackButton } from '../telegram';
+import { productUrl } from '../deepLink';
 import { trackCatalogEvent } from '../analytics';
 
 type Props = {
@@ -334,6 +335,7 @@ type SheetProps = {
 const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin }: SheetProps) => {
   const [slide, setSlide] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [shared, setShared] = useState(false);   // «Скопійовано ✓» після поділитися
   const trackRef = useRef<HTMLDivElement>(null);
   // Обраний розмір їде в текст замовлення. Коли розмір один — беремо його одразу
   // (питати нема про що); коли їх кілька — покупець мусить обрати, інакше менеджер
@@ -391,6 +393,24 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
       chosen ? `Розмір: ${variantLabel(chosen)}` : null,
       `Ціна: ${price}`,
     ].filter((l) => l !== null).join('\n');
+  };
+
+  // Поділитися товаром. Посилання веде на /t/<id> — бекенд віддає ту саму вітрину,
+  // але з мета-тегами, тож у чаті воно розгортається карткою з фото й ціною.
+  const handleShare = () => {
+    haptic('light');
+    const url = productUrl(product.id, titleText);
+    if (isInTelegram) {
+      shareViaTelegram(url, titleText);
+      return;
+    }
+    if (navigator.share) {
+      void navigator.share({ title: titleText, url }).catch(() => { /* скасував — не помилка */ });
+      return;
+    }
+    void navigator.clipboard?.writeText(url)
+      .then(() => { setShared(true); setTimeout(() => setShared(false), 1500); })
+      .catch(() => { /* буфер недоступний — нічого не робимо, посилання видно в адресі */ });
   };
 
   const handleContact = () => {
@@ -540,6 +560,13 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
                 {(product.fav_count ?? 0) > 0 ? `${product.fav_count} в обраному` : 'В обране'}
               </button>
             )}
+            {/* Поділитися: у Telegram — нативний вибір чату, поза ним — системне
+                «Поділитися», а якщо його нема (десктоп) — копіювання посилання. */}
+            <button type="button" className="fav-line" onClick={handleShare}
+              title="Поділитися посиланням на товар">
+              <ShareIcon />
+              {shared ? 'Скопійовано ✓' : 'Поділитися'}
+            </button>
             {admin && (
               <span className="views-line" title="Переглядів цієї картки покупцями">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -673,6 +700,14 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     </div>
   );
 };
+
+const ShareIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+    <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+  </svg>
+);
 
 const HeartIcon = ({ filled }: { filled?: boolean }) => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'}

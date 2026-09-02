@@ -8,6 +8,7 @@ import { ProductPage } from './components/ProductPage';
 import { useCatalog, useDebounced } from './hooks/useCatalog';
 import { useFavorites } from './useFavorites';
 import { trackCatalogEvent } from './analytics';
+import { idFromPath, initialProductId, pushProduct, replaceProduct, seedHistoryForDeepLink } from './deepLink';
 import { ADMIN_TOKEN_KEY, clearAdminToken, currentTheme, haptic, hapticSelect, hydrateAdminTokenFromCloud, initDataRaw, openChannel, saveAdminTokenEverywhere, telegramUserId, toggleTheme } from './telegram';
 
 // Адмін-режим (бачить тумблер «з фото» тощо): Telegram ID у allowlist або ?admin=1
@@ -42,7 +43,9 @@ export const App = () => {
   );
   const [filterOptions, setFilterOptions] = useState<FilterOptions | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
-  const [productId, setProductId] = useState<number | null>(null);
+  // Прямий вхід за посиланням (/t/<id> або ?startapp=<id> у Telegram) — товар
+  // відкривається одразу, ще до того, як довантажиться сітка каталогу.
+  const [productId, setProductId] = useState<number | null>(initialProductId);
   const [sellerUsername, setSellerUsername] = useState('');
   const [sellerPhone, setSellerPhone] = useState('');
   const [sellerInstagram, setSellerInstagram] = useState('');
@@ -279,9 +282,26 @@ export const App = () => {
     };
   }, [loadMore, items]);
 
+  // Адреса ↔ відкрита картка. Крок «назад» (кнопка Telegram, свайп, кнопка браузера)
+  // приходить сюди як popstate — і саме він закриває картку.
+  useEffect(() => {
+    const opened = initialProductId();
+    if (opened !== null) seedHistoryForDeepLink(opened);   // під картку — крок «каталог»
+    const onPop = () => setProductId(idFromPath());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
   const handleOpenProduct = (id: number) => {
     haptic('light');
+    pushProduct(id, productTitle(id));   // адреса товару — щоб посилання можна було дати
     setProductId(id);   // картка — оверлей поверх каталогу; скрол каталогу зберігається
+  };
+
+  // Назва для «людського» хвоста адреси (/t/170331-ecco-street-1)
+  const productTitle = (id: number): string | undefined => {
+    const it = items.find((x) => x.id === id);
+    return it ? [it.brand, it.model].filter(Boolean).join(' ') : undefined;
   };
 
   // Тап по ♥️: перемикаємо обране (оптимістично) і оновлюємо публічний лічильник
@@ -538,7 +558,13 @@ export const App = () => {
         <ProductPage
           productId={productId}
           siblingIds={items.map((it) => it.id)}
-          onNavigate={(id) => { haptic('light'); setProductId(id); }}
+          onNavigate={(id) => {
+            haptic('light');
+            // Гортання свайпом — ЗАМІНА кроку історії, а не новий: інакше «назад»
+            // довелося б тиснути стільки разів, скільки карток пролистали.
+            replaceProduct(id, productTitle(id));
+            setProductId(id);
+          }}
           onNeedMore={loadMore}
           isFavorite={isFav}
           onToggleFav={(pn) => { haptic('light'); return toggleFav(pn); }}
@@ -549,7 +575,7 @@ export const App = () => {
           sellerInstagram={sellerInstagram}
           sellerViber={sellerViber}
           admin={isAdmin}
-          onBack={() => setProductId(null)}
+          onBack={() => window.history.back()}   // адресу знімає popstate нижче
         />
       )}
 
