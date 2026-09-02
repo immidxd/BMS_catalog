@@ -197,8 +197,11 @@ async def record_event(
     # Клік «Замовити» → рядок у документі власника «Замовлення». У ФОНІ: покупець
     # не має чекати на Google, а збій там не повинен ламати відповідь каталогу.
     if event_type == "contact_click" and pnum and orders_sheet.enabled():
+        # Передаємо номер ЯК Є, з решіткою: у БД він зберігається саме так
+        # (#Ф4336), і без неї пошук ціни нічого не знаходив. Решітку для аркуша
+        # зрізає вже сам писар — у власника в документі номери без неї.
         background.add_task(orders_sheet.handle_contact_click,
-                            session_id, pnum.lstrip("#"), meta.get("size"))
+                            session_id, pnum, meta.get("size"))
 
     # Keep the old admin badge compatible, but increment it only for a genuine,
     # deduplicated active-card view. Historical inflated values are preserved as legacy.
