@@ -87,12 +87,26 @@ def _service_account_info() -> Dict[str, Any]:
     """Ключ зі змінної середовища. Приймаємо і чистий JSON, і base64 — приватний
     ключ містить переноси рядків, і при вставці у веб-поле JSON легко ламається;
     base64 цю проблему знімає повністю."""
+    import base64
     raw = (os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON") or "").strip()
+    # Веб-поля люблять додавати лапки навколо значення — знімаємо
+    if len(raw) > 1 and raw[0] == raw[-1] and raw[0] in "'\"":
+        raw = raw[1:-1].strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        import base64
-        return json.loads(base64.b64decode(raw))
+        pass
+    try:
+        return json.loads(base64.b64decode(raw.encode("ascii", "ignore")))
+    except Exception as exc:
+        # Показуємо ФОРМУ значення, а не сам ключ: цього досить, щоб зрозуміти,
+        # що саме приїхало (обрізане, у лапках, із зайвим текстом), і безпечно.
+        bad = next((i for i, ch in enumerate(raw) if not ch.isascii()), None)
+        raise RuntimeError(
+            f"GOOGLE_SERVICE_ACCOUNT_JSON не розібрано: довжина={len(raw)}, "
+            f"починається з {raw[:12]!r}, перший не-ASCII символ на позиції {bad}. "
+            f"Найнадійніше — вставити ключ у base64 одним рядком. ({exc})"
+        ) from exc
 
 
 def _client():
