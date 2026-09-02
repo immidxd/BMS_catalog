@@ -83,12 +83,23 @@ def sheet_date(title: str):
         return None
 
 
+def _service_account_info() -> Dict[str, Any]:
+    """Ключ зі змінної середовища. Приймаємо і чистий JSON, і base64 — приватний
+    ключ містить переноси рядків, і при вставці у веб-поле JSON легко ламається;
+    base64 цю проблему знімає повністю."""
+    raw = (os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON") or "").strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        import base64
+        return json.loads(base64.b64decode(raw))
+
+
 def _client():
     """gspread-клієнт із ключа в змінній середовища (файлу у хмарі немає)."""
     import gspread
     from google.oauth2.service_account import Credentials
-    info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
-    creds = Credentials.from_service_account_info(info, scopes=[
+    creds = Credentials.from_service_account_info(_service_account_info(), scopes=[
         "https://www.googleapis.com/auth/spreadsheets",
     ])
     return gspread.authorize(creds)
@@ -317,7 +328,24 @@ def handle_contact_click(session_id: str, productnumber: str, size: Optional[str
             remember(db, session_id, placed[0], placed[1])
     except Exception as exc:                       # noqa: BLE001
         # Документ власника важливіший за нашу статистику: будь-який збій тут
-        # НЕ має ламати відповідь каталогу — просто лишається в логах.
+        # НЕ має ламати відповідь каталогу. Причину кладемо в БД — логи хмари
+        # читати незручно, а так збій видно звідусіль і одразу.
         logger.warning("[orders] намір не записано (%s): %s", productnumber, exc)
+        try:
+            db.rollback()
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS catalog_order_errors (
+                    id serial PRIMARY KEY,
+                    at timestamptz NOT NULL DEFAULT now(),
+                    productnumber varchar(80),
+                    reason text
+                )
+            """))
+            db.execute(text("INSERT INTO catalog_order_errors (productnumber, reason) "
+                            "VALUES (:pn, :r)"),
+                       {"pn": productnumber, "r": f"{type(exc).__name__}: {exc}"[:500]})
+            db.commit()
+        except Exception:
+            pass
     finally:
         db.close()
