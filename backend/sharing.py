@@ -186,20 +186,27 @@ async def product_page(
 
 
 def _shop_html(page: str, canonical: str) -> HTMLResponse:
-    """Загальні теги магазину — для кореня і для знятих з публікації товарів."""
+    """Загальні теги магазину — для кореня і для знятих з публікації товарів.
+
+    Назва в інтерфейсі (шапка, поле пошуку) і назва назовні — різні задачі. Усередині
+    коротке ім'я доречне, а в заголовку вкладки й прев'ю посилання його бачить
+    незнайомець у видачі Google чи в чаті — там ім'я без пояснення не каже нічого.
+    Тому SHOP_TAGLINE додається ЛИШЕ до зовнішнього заголовка."""
     name = shop_name()
+    tagline = (os.getenv("SHOP_TAGLINE") or "").strip()
+    title = f"{name} — {tagline}" if tagline else name
     description = (os.getenv("SHOP_DESCRIPTION") or "").strip() \
         or "Наявні товари з пошуком за брендом, розміром і ціною."
     tags = _meta({
         "description": description,
         "og:type": "website",
         "og:site_name": name,
-        "og:title": name,
+        "og:title": title,
         "og:description": description,
         "og:url": canonical,
         "twitter:card": "summary",
     }, canonical)
-    return _no_store(HTMLResponse(_inject(page, tags, name)))
+    return _no_store(HTMLResponse(_inject(page, tags, title)))
 
 
 def _no_store(response: HTMLResponse) -> HTMLResponse:

@@ -23,6 +23,8 @@ type Props = {
   sellerPhone: string;
   sellerInstagram: string;
   sellerViber: string;
+  // Екран «Як купити» — відкривається зі сторінки товару, де сумнів найгостріший
+  onHowToBuy?: () => void;
   admin?: boolean;   // адмін може відкрити деталь ще не опублікованого товару
   onBack: () => void;
 };
@@ -55,7 +57,7 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
 const SWIPE_GAP = 12;
 const SWIPE_EASE = 'cubic-bezier(.22,.61,.36,1)';
 
-export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin = false, onBack }: Props) => {
+export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, onHowToBuy, admin = false, onBack }: Props) => {
   const [error, setError] = useState(false);
   const [, bump] = useState(0);                    // ререндер, коли поповнився кеш деталей
   const cache = useRef(new Map<string, ProductDetail>()).current;
@@ -303,7 +305,8 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
                   isFavorite={isFavorite} onToggleFav={onToggleFav}
                   onPatch={(updater) => patchProduct(id, updater)}
                   sellerUsername={sellerUsername} sellerPhone={sellerPhone}
-                  sellerInstagram={sellerInstagram} sellerViber={sellerViber} />
+                  sellerInstagram={sellerInstagram} sellerViber={sellerViber}
+                  onHowToBuy={onHowToBuy} />
               ) : (
                 <div className="empty">Завантаження…</div>
               )}
@@ -326,13 +329,14 @@ type SheetProps = {
   sellerPhone: string;
   sellerInstagram: string;
   sellerViber: string;
+  onHowToBuy?: () => void;
   admin: boolean;
 };
 
 // Одна картка товару всередині панелі стрічки: галерея, характеристики, зв'язок.
 // Власний стан галереї (слайд/скрол) — у кожної панелі свій, тому сусідні картки
 // не «підглядають» одна за одною під час свайпу.
-const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, admin }: SheetProps) => {
+const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, onHowToBuy, admin }: SheetProps) => {
   const [slide, setSlide] = useState(0);
   const [copied, setCopied] = useState(false);
   const [shared, setShared] = useState(false);   // «Скопійовано ✓» після поділитися
@@ -663,6 +667,15 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
               </div>
             ))}
           </div>
+        )}
+
+        {/* Просто над кнопкою «Замовити» — саме тут у покупця виникають питання
+            «а як платити?» і «що як не підійде?», через які він і не пише. */}
+        {onHowToBuy && (
+          <button type="button" className="how-to-buy" onClick={() => { haptic('light'); onHowToBuy(); }}>
+            Оплата, доставка та обмін
+            <ChevronIcon dir="right" />
+          </button>
         )}
       </div>
 

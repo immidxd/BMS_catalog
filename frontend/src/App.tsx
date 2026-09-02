@@ -1,6 +1,7 @@
 // TG Shop — каталог: пошук, фільтри, сітка товарів, сторінка товару
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CatalogItem, CatalogQuery, Facets, FilterOptions, fetchConfig, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, syncFavorites } from './api';
+import { CatalogItem, CatalogQuery, Facets, FilterOptions, ShopInfoSection, fetchConfig, formatPrice, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, syncFavorites } from './api';
+import { HowToBuySheet } from './components/HowToBuySheet';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
 import { ReorderSheet } from './components/ReorderSheet';
 import { ProductCard, SkeletonCard } from './components/ProductCard';
@@ -52,6 +53,8 @@ export const App = () => {
   const [sellerViber, setSellerViber] = useState('');
   const [tgChannel, setTgChannel] = useState('');
   const [shopName, setShopName] = useState('Каталог');
+  const [howToBuy, setHowToBuy] = useState<ShopInfoSection[]>([]);
+  const [infoOpen, setInfoOpen] = useState(false);   // екран «Як купити»
   const [isAdmin, setIsAdmin] = useState(hasAdminParam);
   const [adminWrites, setAdminWrites] = useState(false);   // чи бекенд дозволяє адмін-запис
   // Фасети наперед: щоб лист фільтрів одразу показував коректні (звужені)
@@ -129,10 +132,8 @@ export const App = () => {
       setSellerInstagram(config.seller_instagram);
       setSellerViber(config.seller_viber);
       setTgChannel(config.tg_channel || '');
-      if (config.shop_name) {
-        setShopName(config.shop_name);
-        document.title = config.shop_name;
-      }
+      if (config.shop_name) setShopName(config.shop_name);
+      setHowToBuy(config.how_to_buy ?? []);
       setAdminWrites(config.admin_writes);
       // Адмін, якщо Telegram ID у allowlist (або вже за ?admin=1)
       if (telegramUserId && config.admin_tg_ids.includes(telegramUserId)) setIsAdmin(true);
@@ -291,6 +292,21 @@ export const App = () => {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
+
+  // Заголовок вкладки. На прямому посиланні сервер уже віддав назву товару — не
+  // затираємо її назвою магазину, а тримаємо в синхроні з тим, що зараз відкрито.
+  useEffect(() => {
+    if (productId === null) document.title = shopName;
+    else {
+      // Формат той самий, що віддає сервер у мета-тегах, — щоб на прямому
+      // посиланні заголовок вкладки не «смикався» після завантаження застосунку
+      const it = items.find((x) => x.id === productId);
+      if (it) {
+        const shown = it.sale_price != null && it.sale_price < it.price ? it.sale_price : it.price;
+        document.title = `${[it.brand, it.model].filter(Boolean).join(' ')} — ${formatPrice(shown)} | ${shopName}`;
+      }
+    }
+  }, [productId, shopName, items]);
 
   const handleOpenProduct = (id: number) => {
     haptic('light');
@@ -524,6 +540,16 @@ export const App = () => {
       </main>
       <div className="load-sentinel" ref={sentinelRef} />
 
+      {/* Підвал: те, що покупець шукає, догортавши до кінця, — хто ви й як купити */}
+      {howToBuy.length > 0 && (
+        <footer className="shop-footer">
+          <button type="button" className="footer-link"
+            onClick={() => { haptic('light'); setInfoOpen(true); }}>
+            Оплата, доставка та обмін
+          </button>
+        </footer>
+      )}
+
       {isSheetOpen && filterOptions && (
         <FilterSheet
           options={filterOptions}
@@ -575,8 +601,14 @@ export const App = () => {
           sellerInstagram={sellerInstagram}
           sellerViber={sellerViber}
           admin={isAdmin}
+          onHowToBuy={howToBuy.length > 0 ? () => setInfoOpen(true) : undefined}
           onBack={() => window.history.back()}   // адресу знімає popstate нижче
         />
+      )}
+
+      {infoOpen && (
+        <HowToBuySheet sections={howToBuy} sellerUsername={sellerUsername}
+          onClose={() => setInfoOpen(false)} />
       )}
 
       {/* Токен адмін-доступу (поза Telegram): власна модалка замість window.prompt —
