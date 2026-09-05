@@ -31,6 +31,14 @@ const ADMIN_SORTS = [
   { key: 'popular', label: 'Найпопулярніші', hint: 'Перегляди + лайки разом (♥ важить ×10)' },
 ] as const;
 
+// Сезонні чіпи одним тапом. Підпис для покупця й назва сезону в даних — РІЗНІ:
+// у базі сезон зветься «Демі», але покупцеві в вересні зрозуміліше «Осінь».
+// Чіп показується, лише якщо такий сезон реально є в наявних товарах.
+const SEASON_CHIPS: Array<{ label: string; season: string }> = [
+  { label: 'Осінь', season: 'Демі' },
+  { label: 'Єврозима', season: 'Єврозима' },
+];
+
 // Дефолт каталогу: «Тільки з фото» увімкнено за замовчуванням (базовий стан,
 // не рахується як активний фільтр). Скидання повертає саме до цього дефолту.
 const DEFAULT_QUERY: CatalogQuery = { sort: 'newest', has_photo: true };
@@ -347,14 +355,15 @@ export const App = () => {
     } as CatalogQuery));
   };
 
-  // Швидкі чіпи-фільтри одним тапом: тип «Сумки» і сезон «Літо». Id типу беремо
+  // Швидкі чіпи-фільтри одним тапом: тип «Сумки» і сезони (див. SEASON_CHIPS). Id типу беремо
   // з фасетів за назвою (не хардкодимо), тож чіп зникає, якщо сумок немає в наявності.
   const bagType = filterOptions?.types.find((t) => t.name === 'Сумка');
   const bagsActive = !!bagType && query.typeids?.length === 1 && query.typeids[0] === bagType.id;
-  const summerActive = query.seasons?.length === 1 && query.seasons[0] === 'Літо';
+  const seasonActive = (season: string) =>
+    query.seasons?.length === 1 && query.seasons[0] === season;
   // «Обране» — по суті кошик: або дивимось збережене, або фільтруємо каталог.
   // Тому вмикання «Обраного» скидає звужуючі фільтри, а будь-який чіп-фільтр
-  // (Сумки/Літо/Знижки) чи застосування листа фільтрів вимикає «Обране». Інакше
+  // (Сумки/сезон/Знижки) чи застосування листа фільтрів вимикає «Обране». Інакше
   // комбінація «Обране + фільтр» майже завжди давала порожній екран.
   const toggleFavView = () => {
     hapticSelect();
@@ -373,10 +382,10 @@ export const App = () => {
       ? { ...q, typeids: undefined }
       : { ...q, typeids: [bagType.id], eu_sizes: undefined, size_letters: undefined });
   };
-  const toggleSummer = () => {
+  const toggleSeason = (season: string) => {
     hapticSelect();
     setFavView(false);
-    setQuery((q) => ({ ...q, seasons: summerActive ? undefined : ['Літо'] }));
+    setQuery((q) => ({ ...q, seasons: seasonActive(season) ? undefined : [season] }));
   };
   const onSaleActive = !!query.on_sale;
   const toggleOnSale = () => {
@@ -477,11 +486,13 @@ export const App = () => {
               Сумки
             </button>
           )}
-          {filterOptions?.seasons.includes('Літо') && (
-            <button type="button" className={`chip${summerActive ? ' active' : ''}`} onClick={toggleSummer}>
-              Літо
+          {SEASON_CHIPS.filter((c) => filterOptions?.seasons.includes(c.season)).map((c) => (
+            <button key={c.season} type="button"
+              className={`chip${seasonActive(c.season) ? ' active' : ''}`}
+              onClick={() => toggleSeason(c.season)}>
+              {c.label}
             </button>
-          )}
+          ))}
           {/* «Знижки»: лише товари з активною акційною ціною */}
           <button type="button" className={`chip chip-sale${onSaleActive ? ' active' : ''}`} onClick={toggleOnSale}>
             Знижки %
