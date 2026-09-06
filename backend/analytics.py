@@ -14,12 +14,13 @@ import os
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from auth import telegram_user_from_init_data
+from auth import telegram_profile_from_init_data, telegram_user_from_init_data
 from database import get_db
+import orders_sheet
 
 router = APIRouter()
 
@@ -151,6 +152,7 @@ def _clean_metadata(event_type: str, metadata: Any) -> Dict[str, str]:
 
 @router.post("/api/analytics/events")
 async def record_event(
+    background: BackgroundTasks,
     payload: Dict[str, Any] = Body(...),
     x_catalog_visitor: Optional[str] = Header(None),
     x_catalog_session: Optional[str] = Header(None),
@@ -192,10 +194,21 @@ async def record_event(
         "metadata": json.dumps(meta),
     }).scalar()
 
-    # ⚠️ Клік «Замовити» рядка в документі «Замовлення» НЕ створює і створювати не
-    # повинен: він лише відкриває чат із чернеткою, а надсилає її покупець сам —
-    # і часто не надсилає. Замовлення народжує НАДІСЛАНИЙ лист (tg_business.py).
-    # Тут клік лишається тим, чим є: подією аналітики про інтерес.
+    # Клік «Замовити» → рядок у документі «Замовлення». Умова одна, і вона ж —
+    # фільтр випадковостей: Telegram МАЄ підтвердити покупця підписом. Тоді в
+    # рядку є ім'я і @нік, тобто з лідом можна працювати; анонімний тап із
+    # браузера рядка не створює — саме такі «замовлення» й були привидами.
+    # Ключ рядка — сам покупець, тож повторний клік не плодить ні другого рядка,
+    # ні другої позиції в ньому. Іконки інших каналів (телефон, Instagram,
+    # Viber) — не «Замовити»: розмова піде повз Telegram, рядок не створюємо.
+    if (event_type == "contact_click" and pnum and meta.get("channel") == "telegram"
+            and orders_sheet.enabled()):
+        # Номер передаємо ЯК Є, з решіткою: у БД він зберігається саме так
+        # (#Ф4336). Решітку для аркуша зрізає вже сам писар.
+        buyer = telegram_profile_from_init_data(x_telegram_init_data or "")
+        if buyer and buyer.get("id"):
+            background.add_task(orders_sheet.place_order, int(buyer["id"]), pnum,
+                                meta.get("size"), buyer)
 
     # Keep the old admin badge compatible, but increment it only for a genuine,
     # deduplicated active-card view. Historical inflated values are preserved as legacy.

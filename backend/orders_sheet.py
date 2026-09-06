@@ -65,6 +65,7 @@ CATALOG_MARK = "CG"
 COL_NUMBERS = "Номера товарів"
 COL_CLIENT = "Клієнт"
 COL_TELEGRAM = "Telegram"
+COL_PHONE = "Контактний номер"
 COL_PRICE = "Ціна"
 COL_DETAILS = "Уточнення"
 COL_STATUS = "Статус відповіді"
@@ -73,7 +74,7 @@ COL_DATE = "Дата замовлення"
 WRITABLE = (COL_NUMBERS, COL_PRICE, COL_DETAILS, COL_STATUS, COL_COMMENT, COL_DATE)
 # Контакти пишемо, лише коли Telegram їх ПІДТВЕРДИВ підписом; у перевірці
 # «вільний рядок» вони теж враховуються — рядок із самим клієнтом не вільний.
-CONTACT_COLS = (COL_CLIENT, COL_TELEGRAM)
+CONTACT_COLS = (COL_CLIENT, COL_TELEGRAM, COL_PHONE)
 
 _DATE_TITLE = re.compile(r"^(\d{2})\.(\d{2})\.(\d{4})$")
 # Один запис за раз у межах процесу: два одночасні кліки не мають цілити в один рядок
@@ -237,6 +238,10 @@ def _values(numbers: List[str], prices: List[str], details: List[str],
         out[COL_CLIENT] = buyer["name"]
     if buyer and buyer.get("username"):
         out[COL_TELEGRAM] = "@" + buyer["username"].lstrip("@")
+    # Номер Telegram мовчки не віддає — він зʼявляється, лише якщо покупець сам
+    # поділився ним. Тому пишемо, коли є, і ніколи не затираємо порожнім.
+    if buyer and buyer.get("phone"):
+        out[COL_PHONE] = buyer["phone"]
     return out
 
 
@@ -313,7 +318,12 @@ def record_intent(productnumber: str, price: Optional[float], size: Optional[str
         # 1) Дозапис у «наш» рядок цього ж заходу
         if previous and previous[0] == ws.title and _is_ours(layout, previous[1]):
             row = previous[1]
-            numbers = _split(layout.cell(row, COL_NUMBERS)) + [number]
+            numbers = _split(layout.cell(row, COL_NUMBERS))
+            if number in numbers:
+                # Повторний клік по тому самому товару — не друга позиція в рядку
+                logger.info("[orders] %s уже в рядку %d — пропускаю", number, row)
+                return previous
+            numbers = numbers + [number]
             prices = _split(layout.cell(row, COL_PRICE)) + ([_fmt_price(price)] if price else [])
             details = _split(layout.cell(row, COL_DETAILS)) + ([detail] if detail else [])
         else:
@@ -354,13 +364,15 @@ def _row_key(tg_user_id: int) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"tg:{tg_user_id}"))
 
 
-def handle_order_message(tg_user_id: int, productnumber: str, size: Optional[str],
+def place_order(tg_user_id: int, productnumber: str, size: Optional[str],
                          buyer: Optional[Dict[str, str]] = None) -> None:
-    """Фонова обробка НАДІСЛАНОГО листа «Цікавить товар: … #Ф2886».
+    """Фонове створення замовлення. Кличеться ЛИШЕ тоді, коли покупця підтвердив
+    Telegram: `tg_user_id` — його перевірена підписом особа, і саме вона стає
+    ключем рядка, тож повторні кліки того самого покупця не плодять рядків.
 
-    Ціну беремо з БД, а не з листа: у документ власника має потрапляти те саме
-    число, що показує вітрина, і його не можна підмінити текстом повідомлення.
-    Невідомий номер — не пишемо взагалі: у листі може бути будь-яка решітка.
+    Ціну беремо з БД, а не з клієнта: у документ власника має потрапляти те саме
+    число, що показує вітрина, і його не можна підмінити з браузера.
+    Невідомого номера в документі бути не може — такий виклик просто ігноруємо.
     """
     if not enabled():
         return
@@ -383,7 +395,7 @@ def handle_order_message(tg_user_id: int, productnumber: str, size: Optional[str
             ORDER BY p.id LIMIT 1
         """), {"pn": productnumber}).first()
         if not found:
-            logger.info("[orders] %s немає в базі — лист не став замовленням", productnumber)
+            logger.info("[orders] %s немає в базі — замовлення не створено", productnumber)
             return
         price = found[0]
         key = _row_key(tg_user_id)
@@ -395,7 +407,7 @@ def handle_order_message(tg_user_id: int, productnumber: str, size: Optional[str
         # Документ власника важливіший за нашу статистику: будь-який збій тут
         # НЕ має ламати приймальню. Причину кладемо в БД — логи хмари читати
         # незручно, а так збій видно звідусіль і одразу.
-        logger.warning("[orders] лист не записано (%s): %s", productnumber, exc)
+        logger.warning("[orders] замовлення не записано (%s): %s", productnumber, exc)
         try:
             db.rollback()
             db.execute(text("""

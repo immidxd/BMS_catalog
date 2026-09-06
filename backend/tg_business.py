@@ -132,7 +132,7 @@ async def telegram_webhook(
         return {"ok": True}                      # це оновлення ми вже обробили
 
     size = _SIZE.search(body)
-    background.add_task(orders_sheet.handle_order_message, int(sender["id"]),
+    background.add_task(orders_sheet.place_order, int(sender["id"]),
                         number.group(0), size.group(1).strip() if size else None,
                         _buyer(sender))
     return {"ok": True}
