@@ -14,6 +14,7 @@ from favorites import router as favorites_router
 from images import URL_PREFIX as IMAGES_URL_PREFIX, get_images_dir
 from sharing import router as sharing_router
 from shop_info import how_to_buy
+from tg_business import router as tg_business_router
 
 # Документація API (Swagger/ReDoc/openapi.json) — за замовчуванням ВИМКНЕНА:
 # публічно не світимо структуру API (зокрема існування адмін-ендпоінта).
@@ -63,6 +64,8 @@ app.include_router(catalog_router)
 app.include_router(admin_router)
 app.include_router(favorites_router)
 app.include_router(analytics_router)
+# Вебхук Telegram Business: надісланий лист менеджеру → рядок у «Замовленнях»
+app.include_router(tg_business_router)
 # Адреси товарів (/t/<id>) і корінь із мета-тегами. ОБОВ'ЯЗКОВО до mount("/") нижче:
 # інакше статика перехопить «/» і прев'ю посилань не буде.
 app.include_router(sharing_router)

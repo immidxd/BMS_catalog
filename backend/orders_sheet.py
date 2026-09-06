@@ -1,4 +1,8 @@
-"""Намір замовлення з каталогу → живий документ «Замовлення» (Google Sheets).
+"""Замовлення з каталогу → живий документ «Замовлення» (Google Sheets).
+
+Привід для рядка — НАДІСЛАНИЙ покупцем лист менеджеру (ловить `tg_business.py`),
+а не клік «Замовити» у вітрині: клік лише відкриває чат із чернеткою, і рядок за
+ним ставав замовленням, якого не існувало.
 
 ⚠️ Документ активно редагує власник ВРУЧНУ, і в ньому вже є другий писар (BMS
 `writeback_order_to_journal`). Тому кожне правило нижче — не стиль, а страховка:
@@ -41,6 +45,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -342,13 +347,20 @@ def record_intent(productnumber: str, price: Optional[float], size: Optional[str
         return None
 
 
-def handle_contact_click(session_id: str, productnumber: str, size: Optional[str],
-                         buyer: Optional[Dict[str, str]] = None) -> None:
-    """Фонова обробка кліку «Замовити». Викликається ПІСЛЯ відповіді користувачу —
-    покупець не чекає на Google, чат відкривається одразу.
+def _row_key(tg_user_id: int) -> str:
+    """Ключ памʼяті «свого» рядка. Для листів це сам покупець: кілька повідомлень
+    підряд про різні товари мають лягти в ОДИН рядок. uuid5 робить із telegram-id
+    стабільний uuid, тож таблиця `catalog_order_rows` (ключ — uuid) лишається як є."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"tg:{tg_user_id}"))
 
-    Ціну беремо з БД, а не з клієнта: у документ власника має потрапляти те саме
-    число, що показує вітрина, і його не можна підмінити з браузера.
+
+def handle_order_message(tg_user_id: int, productnumber: str, size: Optional[str],
+                         buyer: Optional[Dict[str, str]] = None) -> None:
+    """Фонова обробка НАДІСЛАНОГО листа «Цікавить товар: … #Ф2886».
+
+    Ціну беремо з БД, а не з листа: у документ власника має потрапляти те саме
+    число, що показує вітрина, і його не можна підмінити текстом повідомлення.
+    Невідомий номер — не пишемо взагалі: у листі може бути будь-яка решітка.
     """
     if not enabled():
         return
@@ -360,7 +372,7 @@ def handle_contact_click(session_id: str, productnumber: str, size: Optional[str
     db = SessionLocal()
     try:
         ensure_table(db)
-        price = db.execute(text("""
+        found = db.execute(text("""
             SELECT CASE WHEN COALESCE(cl.is_on_sale, FALSE)
                          AND cl.sale_price IS NOT NULL
                          AND cl.sale_price > 0 AND cl.sale_price < p.price
@@ -369,16 +381,21 @@ def handle_contact_click(session_id: str, productnumber: str, size: Optional[str
             LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
             WHERE p.productnumber = :pn
             ORDER BY p.id LIMIT 1
-        """), {"pn": productnumber}).scalar()
+        """), {"pn": productnumber}).first()
+        if not found:
+            logger.info("[orders] %s немає в базі — лист не став замовленням", productnumber)
+            return
+        price = found[0]
+        key = _row_key(tg_user_id)
         placed = record_intent(productnumber, float(price) if price else None,
-                               size, previous=recall(db, session_id), buyer=buyer)
+                               size, previous=recall(db, key), buyer=buyer)
         if placed:
-            remember(db, session_id, placed[0], placed[1])
+            remember(db, key, placed[0], placed[1])
     except Exception as exc:                       # noqa: BLE001
         # Документ власника важливіший за нашу статистику: будь-який збій тут
-        # НЕ має ламати відповідь каталогу. Причину кладемо в БД — логи хмари
-        # читати незручно, а так збій видно звідусіль і одразу.
-        logger.warning("[orders] намір не записано (%s): %s", productnumber, exc)
+        # НЕ має ламати приймальню. Причину кладемо в БД — логи хмари читати
+        # незручно, а так збій видно звідусіль і одразу.
+        logger.warning("[orders] лист не записано (%s): %s", productnumber, exc)
         try:
             db.rollback()
             db.execute(text("""

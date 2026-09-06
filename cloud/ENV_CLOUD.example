@@ -31,4 +31,15 @@ TG_CHANNEL=
 # Назва магазину (заголовок)
 SHOP_NAME=
 
+# ── Замовлення в документ «Замовлення» ───────────────────────────────────────
+# Рядок народжує НАДІСЛАНИЙ покупцем лист менеджеру, який ловить бот, під'єднаний
+# до акаунта через Telegram Business (BotFather → Business Mode; Telegram →
+# Налаштування → Telegram Business → Чат-боти). Без TG_WEBHOOK_SECRET приймальня
+# відповідає 403 усім, тобто вимкнена.
+CATALOG_ORDERS_SHEET=1
+ORDERS_SPREADSHEET_ID=<id документа «Замовлення»>
+GOOGLE_SERVICE_ACCOUNT_JSON=<ключ сервісного акаунта, надійніше в base64 одним рядком>
+TG_WEBHOOK_SECRET=<довгий випадковий рядок, ≥16 символів>
+# Після деплою один раз: python3 cloud/set_tg_webhook.py https://<адреса-каталогу>
+
 # Swagger лишити вимкненим на проді (не задавати CATALOG_ENABLE_DOCS)

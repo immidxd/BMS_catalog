@@ -14,13 +14,12 @@ import os
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from auth import telegram_profile_from_init_data, telegram_user_from_init_data
+from auth import telegram_user_from_init_data
 from database import get_db
-import orders_sheet
 
 router = APIRouter()
 
@@ -152,7 +151,6 @@ def _clean_metadata(event_type: str, metadata: Any) -> Dict[str, str]:
 
 @router.post("/api/analytics/events")
 async def record_event(
-    background: BackgroundTasks,
     payload: Dict[str, Any] = Body(...),
     x_catalog_visitor: Optional[str] = Header(None),
     x_catalog_session: Optional[str] = Header(None),
@@ -194,15 +192,10 @@ async def record_event(
         "metadata": json.dumps(meta),
     }).scalar()
 
-    # Клік «Замовити» → рядок у документі власника «Замовлення». У ФОНІ: покупець
-    # не має чекати на Google, а збій там не повинен ламати відповідь каталогу.
-    if event_type == "contact_click" and pnum and orders_sheet.enabled():
-        # Передаємо номер ЯК Є, з решіткою: у БД він зберігається саме так
-        # (#Ф4336), і без неї пошук ціни нічого не знаходив. Решітку для аркуша
-        # зрізає вже сам писар — у власника в документі номери без неї.
-        background.add_task(orders_sheet.handle_contact_click, session_id, pnum,
-                            meta.get("size"),
-                            telegram_profile_from_init_data(x_telegram_init_data or ""))
+    # ⚠️ Клік «Замовити» рядка в документі «Замовлення» НЕ створює і створювати не
+    # повинен: він лише відкриває чат із чернеткою, а надсилає її покупець сам —
+    # і часто не надсилає. Замовлення народжує НАДІСЛАНИЙ лист (tg_business.py).
+    # Тут клік лишається тим, чим є: подією аналітики про інтерес.
 
     # Keep the old admin badge compatible, but increment it only for a genuine,
     # deduplicated active-card view. Historical inflated values are preserved as legacy.
