@@ -278,6 +278,19 @@ def main():
     m_total, m_back = _merge_catalog_listings(lc, cc, local_dsn)
     print(f"  ✓ catalog_listings: {m_total} рядків (мердж; у локальну повернуто {m_back})")
 
+    # ⚠️ ПРИХОВАНІ ЗНІМКИ читаємо САМЕ ТУТ, до rollback нижче: після нього
+    # локальна транзакція закрита, а таблиця живе в базі BMS, не на диску.
+    # Ім'я файлу вже містить номер товару, тож його одного досить як ключа.
+    # Регістр опускаємо в Python: база BMS створена з локаллю C, де lower() не
+    # чіпає кирилицю ('Ф4384' лишається 'Ф4384').
+    hidden_photos: set[str] = set()
+    try:
+        lc.execute("SELECT filename FROM product_photo_hidden")
+        hidden_photos = {(r[0] or "").strip().lower() for r in lc.fetchall()}
+    except Exception as exc:  # noqa: BLE001 — стара база без цієї таблиці
+        local.rollback()
+        print(f"  · приховані фото недоступні ({exc.__class__.__name__}) — синкаємо всі")
+
     # Локальних читань більше не буде (catalog_images читає ДИСК, не БД) — закриваємо
     # читальну транзакцію ТУТ, до найдовшої частини (заливання в хмару). Інакше вона
     # висіла б відкритою всю мережеву роботу й тримала локи на таблицях BMS.
@@ -290,14 +303,23 @@ def main():
     cc.execute('CREATE TABLE IF NOT EXISTS catalog_images (relpath text, version text)')
     cc.execute('TRUNCATE catalog_images')
     buf = io.StringIO()
-    n = 0
+    n = skipped = 0
     for relpath, version in images._iter_photo_records():
+        # Приховане в BMS не потрапляє у вітрину ВЗАГАЛІ: хмарний images.py
+        # будує індекс саме з цієї таблиці, тож те, чого тут немає, каталог не
+        # покаже — ні в галереї товару, ні як головне фото, ні у фільтрі
+        # «тільки з фото». Сам файл при цьому лишається в R2, тож уже
+        # опубліковані оголошення не зламаються.
+        if os.path.basename(relpath).lower() in hidden_photos:
+            skipped += 1
+            continue
         buf.write(f"{relpath}\t{version}\n")
         n += 1
     buf.seek(0)
     cc.copy_expert("COPY catalog_images (relpath, version) FROM STDIN", buf)
     cc.execute('CREATE INDEX IF NOT EXISTS ix_catimg_relpath ON catalog_images(relpath)')
-    print(f"  ✓ catalog_images: {n} фото")
+    print(f"  ✓ catalog_images: {n} фото"
+          + (f" (приховано {skipped})" if skipped else ""))
 
     for ix in INDEXES:
         cc.execute(ix)
