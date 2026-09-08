@@ -928,11 +928,17 @@ async def get_catalog_product(
 
     # Технології — ОКРЕМИЙ guarded-запит (не в основному JOIN!), щоб відсутність
     # таблиці technologies у якійсь БД (напр. хмара до синку) НЕ валила всю картку.
+    # ⚠️ ДЖЕРЕЛО — product_technologies, а НЕ products.technologyid. Технології
+    # стали many-to-many 04.09.2026, скаляр DEPRECATED і занулений у BMS — тож
+    # старий запит повертав NULL для геть усіх товарів, і блок мовчки зник.
+    # У товару їх буває кілька; порядок задає pt.ord.
     technology = None
     try:
         technology = db.execute(
-            text("SELECT t.technologyname FROM products p "
-                 "LEFT JOIN technologies t ON t.id = p.technologyid WHERE p.id = :id"),
+            text("SELECT string_agg(t.technologyname, ', ' ORDER BY pt.ord) "
+                 "FROM product_technologies pt "
+                 "JOIN technologies t ON t.id = pt.technology_id "
+                 "WHERE pt.product_id = :id"),
             {"id": product_id},
         ).scalar()
     except Exception:

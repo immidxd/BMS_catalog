@@ -65,6 +65,12 @@ TABLES = {
     "color_groups": None, "color_group_members": None,
     "materials": None, "product_materials": None,
     "technologies": None,   # для блоку «Технології» в картці (join у деталі каталогу)
+    # Технології стали many-to-many (04.09.2026): скаляр products.technologyid
+    # DEPRECATED і занулений, а зв'язки живуть тут. Без цієї таблиці блок
+    # «Технології» у вітрині порожній у ВСІХ товарів.
+    "product_technologies": None,
+    # Протектор — окремий довідник поряд із типом підошви (03.09.2026).
+    "tread_types": None,
     # catalog_listings НЕМАЄ у цьому списку: публікації синхронізуються
     # ДВОБІЧНО (мердж newest-wins) — див. _merge_catalog_listings нижче.
     # Простий push затирав би тумблери 👁, натиснуті в Mini App (вони пишуть
@@ -267,6 +273,15 @@ def main():
             continue
         collist = ", ".join(f'"{n}"' for n in names)
         cc.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({", ".join(defs)})')
+        # ⚠️ CREATE TABLE IF NOT EXISTS створює лише НОВУ таблицю. У наявну
+        # колонка, додана в BMS пізніше, не потрапляла ніколи — і весь синхрон
+        # падав на COPY: «column "treadtypeid" of relation "products" does not
+        # exist». Каталог при цьому мовчки застигав на старих даних, а тумблер
+        # «в каталог» у картці ніби спрацьовував.
+        # Тому доганяємо схему явно. ADD COLUMN IF NOT EXISTS без DEFAULT — це
+        # зміна лише каталогу таблиці, без переписування рядків.
+        for d in defs:
+            cc.execute(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS {d}')
         cc.execute(f'TRUNCATE "{table}"')
         buf = io.StringIO()
         lc.copy_expert(f'COPY (SELECT {collist} FROM "{table}") TO STDOUT', buf)
