@@ -306,6 +306,19 @@ def main():
         local.rollback()
         print(f"  · приховані фото недоступні ({exc.__class__.__name__}) — синкаємо всі")
 
+    # ⚠️ ІНДЕКС ФОТО — З БАЗИ BMS (photo_r2_index), а не зі сканування диска.
+    # R2 — джерело правди; локальна тека BMS — лише робочий кеш і може зникнути.
+    # Раніше цей крок ходив по диску, і після втрати теки вітрина втратила б
+    # усі фото, хоча файли в R2 живі. Індекс кладе туди сам BMS при кожній
+    # перебудові свого R2-індексу. Читаємо ДО rollback нижче.
+    r2_records: list = []
+    try:
+        lc.execute("SELECT relpath, COALESCE(version, '') FROM photo_r2_index")
+        r2_records = [(r[0], r[1]) for r in lc.fetchall()]
+    except Exception as exc:  # noqa: BLE001 — стара база без таблиці
+        local.rollback()
+        print(f"  · photo_r2_index недоступний ({exc.__class__.__name__}) — сканую диск")
+
     # Локальних читань більше не буде (catalog_images читає ДИСК, не БД) — закриваємо
     # читальну транзакцію ТУТ, до найдовшої частини (заливання в хмару). Інакше вона
     # висіла б відкритою всю мережеву роботу й тримала локи на таблицях BMS.
@@ -319,7 +332,9 @@ def main():
     cc.execute('TRUNCATE catalog_images')
     buf = io.StringIO()
     n = skipped = 0
-    for relpath, version in images._iter_photo_records():
+    source = r2_records if r2_records else list(images._iter_photo_records())
+    print(f"  · джерело фото: {'photo_r2_index (R2)' if r2_records else 'локальний диск'}")
+    for relpath, version in source:
         # Приховане в BMS не потрапляє у вітрину ВЗАГАЛІ: хмарний images.py
         # будує індекс саме з цієї таблиці, тож те, чого тут немає, каталог не
         # покаже — ні в галереї товару, ні як головне фото, ні у фільтрі
