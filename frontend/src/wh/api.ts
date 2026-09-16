@@ -87,7 +87,15 @@ const q = (o: Record<string, string | number | undefined>) =>
   Object.entries(o).filter(([, v]) => v !== undefined && v !== '')
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
 
+export type WhoAmI = {
+  user_id: number | null; name: string; access: boolean;
+  signature_warehouse_bot: boolean; signature_shop_bot: boolean; in_staff: boolean;
+  server: { warehouse_bot_token_set: boolean; staff_ids_set: boolean };
+  problems: string[];
+};
+
 export const api = {
+  whoami: () => req<WhoAmI>('GET', '/api/wh/whoami'),
   scan: (code: string) => req<ScanResult>('GET', `/api/wh/scan?${q({ code })}`),
   search: (text: string) => req<{ products: Product[] }>('GET', `/api/wh/search?${q({ q: text })}`),
   product: (id: number) => req<Product>('GET', `/api/wh/products/${id}`),

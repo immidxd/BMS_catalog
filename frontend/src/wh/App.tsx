@@ -4,7 +4,7 @@
 // Принцип: кожна дія = 1 скан + 1 великий тап. «Сесія коробки» — відсканував
 // коробку раз, далі скануєш товари поспіль (попап не закривається).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, ApiError, hasAuth, type Box, type Product, type ScanResult, type WhEvent } from './api';
+import { api, ApiError, hasAuth, type Box, type Product, type ScanResult, type WhEvent, type WhoAmI } from './api';
 import { canScan, confirmDialog, haptic, scanMany, scanOnce } from './scanner';
 import { tg, isInTelegram } from '../telegram';
 
@@ -38,7 +38,12 @@ export function App() {
   const view = stack[stack.length - 1];
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [busy, setBusy] = useState(false);
+  const [who, setWho] = useState<WhoAmI | null>(null);
   const toastId = useRef(0);
+
+  // Самодіагностика доступу: замість глухого «Немає доступу» — хто ти і чого
+  // бракує на сервері (id для білого списку, токен бота).
+  useEffect(() => { api.whoami().then(setWho).catch(() => setWho(null)); }, []);
 
   const toast = useCallback((kind: Toast['kind'], text: string) => {
     const id = ++toastId.current;
@@ -123,6 +128,12 @@ export function App() {
     <div className="wh">
       {!hasAuth() && (
         <div className="wh-banner err">Немає доступу: відкрийте застосунок із Telegram (бот «BMS Склад»).</div>
+      )}
+      {who && !who.access && (
+        <div className="wh-banner warn" style={{ display: 'block' }}>
+          <div><b>Немає доступу до складу.</b>{who.user_id ? ` Ваш Telegram id: ${who.user_id}${who.name ? ` (${who.name})` : ''}.` : ''}</div>
+          {who.problems.map((p, i) => <div key={i} style={{ fontWeight: 400, marginTop: 4 }}>• {p}</div>)}
+        </div>
       )}
       {view.name === 'home' && (
         <Home busy={busy} onScan={doScan} onSearch={doSearch} onBoxes={() => push({ name: 'boxes' })} />

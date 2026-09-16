@@ -80,6 +80,47 @@ def require_staff(
     raise HTTPException(status_code=401, detail="Немає доступу до складу")
 
 
+@router.get("/whoami")
+def whoami(x_telegram_init_data: Optional[str] = Header(None)):
+    """Самодіагностика доступу для Mini App: ХТО відкрив і ЧОМУ (не) пустили —
+    без секретів. Показує id користувача, чи підпис initData збігається з
+    ботом складу / ботом вітрини, чи id у білому списку, і що не задано на
+    сервері. Це те, що власник бачить замість глухого «Немає доступу»."""
+    import json as _json
+    from urllib.parse import parse_qsl
+    uid: Optional[int] = None
+    name = ""
+    if x_telegram_init_data:
+        try:
+            user = _json.loads(dict(parse_qsl(x_telegram_init_data, keep_blank_values=True)).get("user", "{}"))
+            uid = int(user.get("id")) if user.get("id") else None
+            name = " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x).strip()
+        except Exception:  # noqa: BLE001
+            uid = None
+    wh_token_set = bool((os.getenv("WAREHOUSE_BOT_TOKEN") or "").strip())
+    staff_set = bool((os.getenv("WAREHOUSE_TG_IDS") or "").strip())
+    sig_wh = bool(x_telegram_init_data and telegram_profile_from_init_data(x_telegram_init_data, token=_wh_bot_token()))
+    sig_shop = bool(x_telegram_init_data and _bot_token() and telegram_profile_from_init_data(x_telegram_init_data, token=_bot_token()))
+    in_staff = uid is not None and uid in _staff_ids()
+    problems: List[str] = []
+    if not x_telegram_init_data:
+        problems.append("Застосунок відкрито не з Telegram (немає initData).")
+    else:
+        if not sig_wh and not sig_shop:
+            problems.append("Підпис не збігається з жодним ботом: на сервері "
+                            + ("WAREHOUSE_BOT_TOKEN задано, але це токен іншого бота." if wh_token_set
+                               else "не задано WAREHOUSE_BOT_TOKEN (токен бота, через якого відкрито застосунок)."))
+        elif not sig_wh and sig_shop:
+            problems.append("Відкрито через бота вітрини, а не бота складу.")
+        if uid is not None and not in_staff:
+            problems.append(f"Ваш Telegram id {uid} не в списку працівників "
+                            + ("WAREHOUSE_TG_IDS." if staff_set else "— WAREHOUSE_TG_IDS не задано, діє ADMIN_TG_IDS."))
+    return {"user_id": uid, "name": name, "access": bool(sig_wh and in_staff),
+            "signature_warehouse_bot": sig_wh, "signature_shop_bot": sig_shop, "in_staff": in_staff,
+            "server": {"warehouse_bot_token_set": wh_token_set, "staff_ids_set": staff_set},
+            "problems": problems}
+
+
 # ───────────────────────────── допоміжне ─────────────────────────────────────
 
 def parse_code(raw: str) -> Optional[Dict[str, Any]]:
