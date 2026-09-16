@@ -8,3 +8,5 @@ gspread>=6.0
 google-auth>=2.28
 # База часових поясів: у python:slim її немає, а дата замовлення має бути київська
 tzdata>=2024.1
+# getMe для самодіагностики доступу складу (warehouse.py); gspread його й так тягне
+requests>=2.31

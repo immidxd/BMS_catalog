@@ -97,18 +97,35 @@ def whoami(x_telegram_init_data: Optional[str] = Header(None)):
             name = " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x).strip()
         except Exception:  # noqa: BLE001
             uid = None
-    wh_token_set = bool((os.getenv("WAREHOUSE_BOT_TOKEN") or "").strip())
+    wh_token_raw = os.getenv("WAREHOUSE_BOT_TOKEN") or ""
+    wh_token_set = bool(wh_token_raw.strip())
     staff_set = bool((os.getenv("WAREHOUSE_TG_IDS") or "").strip())
+    # Форма токена (без витоку): лапки/пробіли — типова помилка при вставці.
+    token_shape = {
+        "looks_valid": bool(re.match(r"^\d{6,12}:[A-Za-z0-9_-]{30,}$", wh_token_raw.strip())),
+        "has_quotes": wh_token_raw.strip()[:1] in ("'", '"'),
+        "has_spaces": wh_token_raw != wh_token_raw.strip() or " " in wh_token_raw.strip(),
+    }
+    bot_info = _bot_identity(_wh_bot_token())
     sig_wh = bool(x_telegram_init_data and telegram_profile_from_init_data(x_telegram_init_data, token=_wh_bot_token()))
     sig_shop = bool(x_telegram_init_data and _bot_token() and telegram_profile_from_init_data(x_telegram_init_data, token=_bot_token()))
     in_staff = uid is not None and uid in _staff_ids()
     problems: List[str] = []
+    if wh_token_set and token_shape["has_quotes"]:
+        problems.append("WAREHOUSE_BOT_TOKEN вставлено з лапками — приберіть їх.")
+    if wh_token_set and not token_shape["looks_valid"]:
+        problems.append("WAREHOUSE_BOT_TOKEN не схожий на токен бота (формат 1234567890:AAF…).")
+    if wh_token_set and bot_info and not bot_info.get("ok"):
+        problems.append("Telegram не приймає WAREHOUSE_BOT_TOKEN (getMe: " + str(bot_info.get("error")) + ").")
     if not x_telegram_init_data:
         problems.append("Застосунок відкрито не з Telegram (немає initData).")
     else:
         if not sig_wh and not sig_shop:
+            who = (f"токен на сервері належить боту @{bot_info['username']}" if bot_info and bot_info.get("username")
+                   else "це токен іншого бота")
             problems.append("Підпис не збігається з жодним ботом: на сервері "
-                            + ("WAREHOUSE_BOT_TOKEN задано, але це токен іншого бота." if wh_token_set
+                            + (f"WAREHOUSE_BOT_TOKEN задано, але {who}. Відкрийте застосунок саме через цього бота "
+                               f"або вставте токен того бота, через якого відкриваєте." if wh_token_set
                                else "не задано WAREHOUSE_BOT_TOKEN (токен бота, через якого відкрито застосунок)."))
         elif not sig_wh and sig_shop:
             problems.append("Відкрито через бота вітрини, а не бота складу.")
@@ -117,8 +134,36 @@ def whoami(x_telegram_init_data: Optional[str] = Header(None)):
                             + ("WAREHOUSE_TG_IDS." if staff_set else "— WAREHOUSE_TG_IDS не задано, діє ADMIN_TG_IDS."))
     return {"user_id": uid, "name": name, "access": bool(sig_wh and in_staff),
             "signature_warehouse_bot": sig_wh, "signature_shop_bot": sig_shop, "in_staff": in_staff,
-            "server": {"warehouse_bot_token_set": wh_token_set, "staff_ids_set": staff_set},
+            "server": {"warehouse_bot_token_set": wh_token_set, "staff_ids_set": staff_set,
+                       "token_shape": token_shape,
+                       "warehouse_bot": ({"username": bot_info.get("username"), "id": bot_info.get("id")}
+                                         if bot_info and bot_info.get("ok") else None)},
             "problems": problems}
+
+
+_BOT_IDENTITY_CACHE: Dict[str, Any] = {}
+
+
+def _bot_identity(token: str) -> Optional[Dict[str, Any]]:
+    """Кому належить токен — getMe у Telegram (нік бота публічний, токен не
+    світимо). Кеш на 5 хв на токен, щоб не смикати Telegram на кожне відкриття."""
+    import time as _time
+    import requests as _rq
+    if not token:
+        return None
+    key = str(hash(token))
+    hit = _BOT_IDENTITY_CACHE.get(key)
+    if hit and _time.time() - hit["at"] < 300:
+        return hit["val"]
+    try:
+        r = _rq.get(f"https://api.telegram.org/bot{token}/getMe", timeout=6)
+        data = r.json()
+        val = ({"ok": True, "username": data["result"].get("username"), "id": data["result"].get("id")}
+               if data.get("ok") else {"ok": False, "error": data.get("description", r.status_code)})
+    except Exception as exc:  # noqa: BLE001
+        val = {"ok": False, "error": str(exc)[:80]}
+    _BOT_IDENTITY_CACHE[key] = {"at": _time.time(), "val": val}
+    return val
 
 
 # ───────────────────────────── допоміжне ─────────────────────────────────────
