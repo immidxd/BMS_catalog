@@ -81,7 +81,8 @@ def require_staff(
 
 
 @router.get("/whoami")
-def whoami(x_telegram_init_data: Optional[str] = Header(None)):
+def whoami(x_telegram_init_data: Optional[str] = Header(None),
+           authorization: Optional[str] = Header(None)):
     """Самодіагностика доступу для Mini App: ХТО відкрив і ЧОМУ (не) пустили —
     без секретів. Показує id користувача, чи підпис initData збігається з
     ботом складу / ботом вітрини, чи id у білому списку, і що не задано на
@@ -137,7 +138,16 @@ def whoami(x_telegram_init_data: Optional[str] = Header(None)):
         if uid is not None and not in_staff:
             problems.append(f"Ваш Telegram id {uid} не в списку працівників "
                             + ("WAREHOUSE_TG_IDS." if staff_set else "— WAREHOUSE_TG_IDS не задано, діє ADMIN_TG_IDS."))
-    return {"user_id": uid, "name": name, "access": bool(sig_wh and in_staff),
+    # Адмін-токен (BMS / розробка в браузері) — теж повний доступ.
+    tok = _admin_token()
+    bearer_ok = False
+    if tok and authorization:
+        scheme, _, value = authorization.partition(" ")
+        bearer_ok = scheme.lower() == "bearer" and hmac.compare_digest(value.strip(), tok)
+    if bearer_ok:
+        problems = []
+    return {"user_id": uid, "name": name or ("BMS" if bearer_ok else ""),
+            "access": bool(bearer_ok or (sig_wh and in_staff)),
             "signature_warehouse_bot": sig_wh, "signature_shop_bot": sig_shop, "in_staff": in_staff,
             "server": {"warehouse_bot_token_set": wh_token_set, "staff_ids_set": staff_set,
                        "token_shape": token_shape,
