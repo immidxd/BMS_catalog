@@ -490,7 +490,8 @@ def locations(product_ids: str = Query(..., description="id через кому"
 def boxes(status: Optional[str] = None, db: Session = Depends(get_db),
           _: str = Depends(require_staff)):
     where = "WHERE b.status = :st" if status else "WHERE b.status <> 'archived'"
-    rows = db.execute(text(_box_summary_sql(where) + " ORDER BY b.code"),
+    # Новіші коробки зверху — на складі працюють із щойно створеними.
+    rows = db.execute(text(_box_summary_sql(where) + " ORDER BY b.created_at DESC, b.id DESC"),
                       {"st": status} if status else {}).mappings().all()
     return {"boxes": [_box_dict(dict(r)) for r in rows]}
 
