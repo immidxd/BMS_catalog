@@ -52,14 +52,24 @@ def telegram_user_from_init_data(init_data: str, max_age_sec: int = 86400,
     except Exception:
         return None
     received_hash = pairs.pop("hash", None)
-    pairs.pop("signature", None)  # Ed25519 (стороння перевірка) — тут не використовуємо
     if not received_hash:
         return None
-    # data_check_string: "key=value" відсортовані за ключем, через \n
-    data_check_string = "\n".join(f"{k}={pairs[k]}" for k in sorted(pairs))
+    # data_check_string: "key=value" відсортовані за ключем, через \n.
+    # Поле `signature` (Ed25519, Bot API 7.10+) Telegram у деяких клієнтах ВКЛЮЧАЄ
+    # в data_check_string для hash, у деяких — ні; перевіряємо обидва варіанти
+    # (обидва — HMAC із секретом бота, безпеки це не послаблює).
     secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
-    calc_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(calc_hash, received_hash):
+    variants = [pairs]
+    if "signature" in pairs:
+        variants.append({k: v for k, v in pairs.items() if k != "signature"})
+    ok = False
+    for fields in variants:
+        data_check_string = "\n".join(f"{k}={fields[k]}" for k in sorted(fields))
+        calc_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(calc_hash, received_hash):
+            ok = True
+            break
+    if not ok:
         return None
     # Свіжість підпису (захист від повторного використання старих initData)
     try:
