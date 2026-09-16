@@ -750,10 +750,21 @@ def print_job_create(payload: PrintJobIn = Body(...), db: Session = Depends(get_
         data = {"product_ids": ids, "copies": payload.copies, "layout": payload.layout}
     # Чи є кому друкувати: агент відмічається при кожному опитуванні.
     agent_seen = db.execute(text("SELECT MAX(seen_at) FROM wh_agents")).scalar()
+    payload_json = json.dumps(data, ensure_ascii=False, sort_keys=True)
+    # Друк: таке саме завдання вже чекає в черзі (принтер був недоступний, а
+    # людина тисне ще раз) — не плодимо копії, повертаємо наявне.
+    if payload.kind in ("box_label", "stickers"):
+        dup = db.execute(text("""
+            SELECT * FROM wh_print_jobs
+            WHERE status = 'queued' AND kind = :kind AND payload = CAST(:payload AS jsonb)
+            ORDER BY id LIMIT 1
+        """), {"kind": payload.kind, "payload": payload_json}).mappings().first()
+        if dup:
+            return {**_job_dict(dict(dup)), "agent_seen_at": agent_seen, "duplicate": True}
     r = db.execute(text("""
         INSERT INTO wh_print_jobs (kind, payload, created_by)
         VALUES (:kind, CAST(:payload AS jsonb), :by) RETURNING *
-    """), {"kind": payload.kind, "payload": json.dumps(data, ensure_ascii=False), "by": actor}).mappings().first()
+    """), {"kind": payload.kind, "payload": payload_json, "by": actor}).mappings().first()
     db.commit()
     return {**_job_dict(dict(r)), "agent_seen_at": agent_seen}
 

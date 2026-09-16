@@ -94,7 +94,7 @@ export type WhoAmI = {
   problems: string[];
 };
 
-export type PrintJob = { id: number; kind: 'box_label' | 'stickers' | 'product_edit'; status: string; error?: string | null; agent_seen_at?: string | null };
+export type PrintJob = { id: number; kind: 'box_label' | 'stickers' | 'product_edit'; status: string; error?: string | null; agent_seen_at?: string | null; duplicate?: boolean };
 export type Condition = { id: number; name: string; n: number };
 export type PrintAgent = { online: boolean; agent: string | null; last_seen: string | null; printer: string | null; queued: number };
 

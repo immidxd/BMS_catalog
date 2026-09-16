@@ -173,12 +173,14 @@ export function App() {
   }, [toast]);
 
   // Друк з телефона: завдання в хмару → агент BMS у крамниці друкує на Xprinter.
-  const printViaAgent = useCallback(async (fn: () => Promise<{ id: number; agent_seen_at?: string | null }>, what: string) => {
+  const printViaAgent = useCallback(async (fn: () => Promise<{ id: number; agent_seen_at?: string | null; duplicate?: boolean }>, what: string) => {
     setBusy(true);
     try {
       const [job, agent] = await Promise.all([fn(), api.printAgent().catch(() => null)]);
-      if (agent && agent.online) toast('ok', `${what} — друкується (${agent.printer ? 'принтер у мережі' : 'BMS'})`);
-      else toast('warn', `${what} — у черзі. Надрукується, щойно BMS на компʼютері буде запущена.`);
+      if (job.duplicate) { haptic.warn(); toast('warn', `${what} — уже в черзі, чекає принтера.`); return job; }
+      if (agent && agent.online && agent.printer) { haptic.ok(); toast('ok', `${what} — друкується`); }
+      else if (agent && agent.online) { haptic.warn(); toast('warn', `${what} — у черзі. BMS працює, але принтер не відповідає: увімкніть Windows-ПК з принтером (міст, порт 9100).`); }
+      else { haptic.warn(); toast('warn', `${what} — у черзі. Надрукується, щойно BMS на компʼютері буде запущена.`); }
       return job;
     } catch (e) { toast('err', errText(e, 'Не вдалося поставити на друк')); return null; }
     finally { setBusy(false); }
