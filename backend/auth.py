@@ -37,11 +37,14 @@ def admin_writes_enabled() -> bool:
     return bool(_admin_token() or (_bot_token() and _admin_ids()))
 
 
-def telegram_user_from_init_data(init_data: str, max_age_sec: int = 86400) -> Optional[int]:
+def telegram_user_from_init_data(init_data: str, max_age_sec: int = 86400,
+                                 token: Optional[str] = None) -> Optional[int]:
     """Перевірка Telegram WebApp initData (HMAC-SHA256) для БУДЬ-ЯКОГО користувача.
     Повертає telegram user.id, якщо підпис валідний і не протух; інакше None.
-    (Використовується для «Обраного» — не потребує адмін-прав.)"""
-    token = _bot_token()
+    (Використовується для «Обраного» — не потребує адмін-прав.)
+    `token` — токен бота, яким підписано initData; за замовчуванням бот вітрини
+    (склад має власного бота — див. warehouse.py)."""
+    token = token if token is not None else _bot_token()
     if not token or not init_data:
         return None
     try:
@@ -70,14 +73,15 @@ def telegram_user_from_init_data(init_data: str, max_age_sec: int = 86400) -> Op
         return None
 
 
-def telegram_profile_from_init_data(init_data: str, max_age_sec: int = 86400) -> Optional[dict]:
+def telegram_profile_from_init_data(init_data: str, max_age_sec: int = 86400,
+                                    token: Optional[str] = None) -> Optional[dict]:
     """Ім'я та нік покупця з initData — ЛИШЕ після тієї ж перевірки підпису, що й
     вище (профіль із клієнта без перевірки підробити тривіально).
 
     Потрібно, щоб у документі «Замовлення» менеджер бачив, ХТО написав, а не
     анонімний рядок. Повертає {id, name, username} або None поза Telegram.
     """
-    uid = telegram_user_from_init_data(init_data, max_age_sec)
+    uid = telegram_user_from_init_data(init_data, max_age_sec, token=token)
     if uid is None:
         return None
     try:

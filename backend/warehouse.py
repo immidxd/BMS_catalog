@@ -1,0 +1,624 @@
+"""Склад: коробки, вміст, події — API для Mini App «BMS Склад» і для десктопної BMS.
+
+Схема — sql/warehouse.sql (застосовується при старті, ідемпотентно). Це ЄДИНЕ
+джерело правди про те, що в якій коробці лежить; синхронізації з локальною
+базою BMS немає навмисно.
+
+Хто може писати:
+  • працівник із Mini App — валідний Telegram `initData`, підписаний ботом
+    складу (WAREHOUSE_BOT_TOKEN; поки не задано — бот вітрини BOT_TOKEN), і
+    user.id ∈ WAREHOUSE_TG_IDS (поки не задано — ADMIN_TG_IDS);
+  • BMS — Bearer CATALOG_ADMIN_TOKEN (той самий, що для публікацій).
+Читати теж лише вони: вміст складу — не публічна інформація.
+
+Товар = рядок products (id), не номер: ростовка — кілька рядків з одним
+номером, і в коробці лежить конкретна пара конкретного розміру. Рядок із
+quantity>1 може лежати частинами в різних коробках (qty у кожній).
+"""
+
+from __future__ import annotations
+
+import hmac
+import json
+import os
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
+from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from auth import _admin_ids, _admin_token, _bot_token, telegram_profile_from_init_data
+from catalog import _SOLD_JOIN
+from database import get_db
+from images import main_image_url
+
+router = APIRouter(prefix="/api/wh", tags=["warehouse"])
+
+QR_PRODUCT = "bms:p:"
+QR_BOX = "bms:b:"
+BOX_CODE_RE = re.compile(r"^[A-ZА-ЯІЇЄҐ]{1,3}\d{1,4}$")
+
+
+# ───────────────────────────── схема ─────────────────────────────────────────
+
+def ensure_warehouse_schema(db: Session) -> None:
+    sql = (Path(__file__).resolve().parent / "sql" / "warehouse.sql").read_text(encoding="utf-8")
+    db.execute(text(sql))
+    db.commit()
+
+
+# ───────────────────────────── доступ ────────────────────────────────────────
+
+def _wh_bot_token() -> str:
+    return (os.getenv("WAREHOUSE_BOT_TOKEN") or "").strip() or _bot_token()
+
+
+def _staff_ids() -> set[int]:
+    raw = (os.getenv("WAREHOUSE_TG_IDS") or "").replace(" ", "")
+    ids = {int(x) for x in raw.split(",") if x.isdigit()}
+    return ids or _admin_ids()
+
+
+def require_staff(
+    authorization: Optional[str] = Header(None),
+    x_telegram_init_data: Optional[str] = Header(None),
+) -> str:
+    """Повертає рядок-актора для журналу: «tg:<id> Ім'я» або «bms»."""
+    tok = _admin_token()
+    if tok and authorization:
+        scheme, _, value = authorization.partition(" ")
+        if scheme.lower() == "bearer" and hmac.compare_digest(value.strip(), tok):
+            return "bms"
+    if x_telegram_init_data:
+        prof = telegram_profile_from_init_data(x_telegram_init_data, token=_wh_bot_token())
+        if prof and prof["id"] in _staff_ids():
+            name = prof.get("name") or prof.get("username") or ""
+            return f"tg:{prof['id']} {name}".strip()
+    raise HTTPException(status_code=401, detail="Немає доступу до складу")
+
+
+# ───────────────────────────── допоміжне ─────────────────────────────────────
+
+def parse_code(raw: str) -> Optional[Dict[str, Any]]:
+    """`bms:p:<id>:<номер>` → product; `bms:b:<код>` → box; інакше None."""
+    s = (raw or "").strip()
+    if s.startswith(QR_PRODUCT):
+        pid, _, number = s[len(QR_PRODUCT):].partition(":")
+        return {"kind": "product", "id": int(pid), "number": number or None} if pid.isdigit() else None
+    if s.startswith(QR_BOX):
+        code = s[len(QR_BOX):].strip().upper()
+        return {"kind": "box", "code": code} if code else None
+    return None
+
+
+def normalize_box_code(code: str) -> str:
+    c = re.sub(r"\s+", "", (code or "")).upper()
+    if not BOX_CODE_RE.match(c):
+        raise HTTPException(status_code=400, detail="Код коробки: 1–3 літери + номер, напр. Z9, L12")
+    return c
+
+
+def _event(db: Session, actor: str, kind: str, *, box: Optional[Dict[str, Any]] = None,
+           product: Optional[Dict[str, Any]] = None, qty: Optional[int] = None,
+           details: Optional[Dict[str, Any]] = None) -> None:
+    db.execute(text("""
+        INSERT INTO wh_events (actor, kind, box_id, box_code, product_id, productnumber, qty, details)
+        VALUES (:actor, :kind, :box_id, :box_code, :pid, :pnum, :qty, CAST(:details AS jsonb))
+    """), {
+        "actor": actor, "kind": kind,
+        "box_id": box["id"] if box else None, "box_code": box["code"] if box else None,
+        "pid": product["id"] if product else None,
+        "pnum": product.get("productnumber") if product else None,
+        "qty": qty, "details": json.dumps(details or {}, ensure_ascii=False),
+    })
+
+
+_PRODUCT_SQL = """
+    SELECT p.id, p.productnumber, p.model, p.price, p.quantity, p.sizeeu, p.size_letter,
+           p.sizeua, p.measurementscm, p.season, p.official_photos_from,
+           b.brandname AS brand, t.typename AS type, c.colorname AS color,
+           g.gendername AS gender, cond.conditionname AS condition,
+           COALESCE(sold.sold_count, 0) AS sold_count,
+           GREATEST(COALESCE(p.quantity, 0) - COALESCE(sold.sold_count, 0), 0) AS available_qty
+    FROM products p
+    LEFT JOIN brands b ON b.id = p.brandid
+    LEFT JOIN types t ON t.id = p.typeid
+    LEFT JOIN colors c ON c.id = p.colorid
+    LEFT JOIN genders g ON g.id = p.genderid
+    LEFT JOIN conditions cond ON cond.id = COALESCE(p.current_conditionid, p.conditionid)
+""" + _SOLD_JOIN
+
+
+def _size_text(r: Dict[str, Any]) -> str:
+    eu = (r.get("sizeeu") or "").strip()
+    if eu:
+        return f"EU {eu}"
+    return (r.get("size_letter") or r.get("sizeua") or "").strip()
+
+
+def _product_dict(r: Dict[str, Any]) -> Dict[str, Any]:
+    pnum = r.get("productnumber") or ""
+    return {
+        "id": int(r["id"]),
+        "productnumber": pnum,
+        "number": pnum.lstrip("#"),
+        "size": _size_text(r),
+        "insole": (r.get("measurementscm") or "").strip(),
+        "brand": r.get("brand"), "model": r.get("model"), "type": r.get("type"),
+        "color": r.get("color"), "gender": r.get("gender"), "season": r.get("season"),
+        "condition": r.get("condition"),
+        "price": r.get("price"),
+        "quantity": int(r.get("quantity") or 0),
+        "sold_count": int(r.get("sold_count") or 0),
+        "available_qty": int(r.get("available_qty") or 0),
+        "image": main_image_url(pnum, r.get("official_photos_from") or ""),
+    }
+
+
+def _load_product(db: Session, product_id: int) -> Optional[Dict[str, Any]]:
+    r = db.execute(text(_PRODUCT_SQL + " WHERE p.id = :id"), {"id": int(product_id)}).mappings().first()
+    return _product_dict(dict(r)) if r else None
+
+
+def _find_products_by_number(db: Session, number: str, limit: int = 20) -> List[Dict[str, Any]]:
+    """Пошук за номером (з «#» чи без): точний збіг спершу, далі за префіксом."""
+    n = (number or "").strip().lstrip("#").upper()
+    if not n:
+        return []
+    rows = db.execute(text(_PRODUCT_SQL + """
+        WHERE UPPER(LTRIM(p.productnumber, '#')) LIKE :pref
+        ORDER BY (UPPER(LTRIM(p.productnumber, '#')) = :exact) DESC, p.productnumber, p.sizeeu
+        LIMIT :lim
+    """), {"pref": n + "%", "exact": n, "lim": int(limit)}).mappings().all()
+    return [_product_dict(dict(r)) for r in rows]
+
+
+def _locations(db: Session, product_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+    """Де зараз лежать товари: {product_id: [{box_code, box_title, qty, packed_at}]}."""
+    if not product_ids:
+        return {}
+    rows = db.execute(text("""
+        SELECT i.product_id, i.qty, i.packed_at, b.code, b.title, b.location, b.status, b.needs_check
+        FROM wh_box_items i JOIN wh_boxes b ON b.id = i.box_id
+        WHERE i.unpacked_at IS NULL AND i.product_id = ANY(:ids)
+        ORDER BY i.packed_at DESC
+    """), {"ids": [int(i) for i in product_ids]}).mappings().all()
+    out: Dict[int, List[Dict[str, Any]]] = {}
+    for r in rows:
+        out.setdefault(int(r["product_id"]), []).append({
+            "box_code": r["code"], "box_title": r["title"], "box_location": r["location"],
+            "box_status": r["status"], "needs_check": r["needs_check"],
+            "qty": int(r["qty"]), "packed_at": r["packed_at"],
+        })
+    return out
+
+
+def _box_row(db: Session, code: str, for_update: bool = False) -> Optional[Dict[str, Any]]:
+    sql = "SELECT * FROM wh_boxes WHERE code = :c" + (" FOR UPDATE" if for_update else "")
+    r = db.execute(text(sql), {"c": normalize_box_code(code)}).mappings().first()
+    return dict(r) if r else None
+
+
+def _box_summary_sql(where: str = "") -> str:
+    return f"""
+        SELECT b.*, COALESCE(s.items, 0) AS items, COALESCE(s.units, 0) AS units,
+               COALESCE(s.value, 0) AS value
+        FROM wh_boxes b
+        LEFT JOIN (
+            SELECT i.box_id, COUNT(*) AS items, SUM(i.qty) AS units,
+                   SUM(i.qty * COALESCE(p.price, 0)) AS value
+            FROM wh_box_items i LEFT JOIN products p ON p.id = i.product_id
+            WHERE i.unpacked_at IS NULL
+            GROUP BY i.box_id
+        ) s ON s.box_id = b.id
+        {where}
+    """
+
+
+def _box_dict(r: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": int(r["id"]), "code": r["code"], "category": r.get("category"),
+        "title": r.get("title"), "location": r.get("location"), "status": r.get("status"),
+        "needs_check": bool(r.get("needs_check")), "note": r.get("note"),
+        "items": int(r.get("items") or 0), "units": int(r.get("units") or 0),
+        "value": float(r.get("value") or 0),
+        "created_at": r.get("created_at"), "sealed_at": r.get("sealed_at"),
+        "checked_at": r.get("checked_at"), "updated_at": r.get("updated_at"),
+        "created_by": r.get("created_by"),
+    }
+
+
+def next_box_code(db: Session, category: str) -> str:
+    cat = re.sub(r"[^A-ZА-ЯІЇЄҐ]", "", (category or "").upper())[:3]
+    if not cat:
+        raise HTTPException(status_code=400, detail="Вкажіть літеру категорії (Z, L, D, T, V…)")
+    rows = db.execute(text("SELECT code FROM wh_boxes WHERE code LIKE :p"), {"p": cat + "%"}).fetchall()
+    used = set()
+    for (code,) in rows:
+        m = re.match(rf"^{re.escape(cat)}(\d+)$", code)
+        if m:
+            used.add(int(m.group(1)))
+    n = 1
+    while n in used:
+        n += 1
+    return f"{cat}{n}"
+
+
+# ───────────────────────────── схеми запитів ─────────────────────────────────
+
+class BoxCreate(BaseModel):
+    code: Optional[str] = None            # порожньо → згенерувати за категорією
+    category: Optional[str] = None        # літера сезону
+    title: Optional[str] = None
+    location: Optional[str] = None
+    note: Optional[str] = None
+    needs_check: bool = False
+
+
+class BoxPatch(BaseModel):
+    title: Optional[str] = None
+    location: Optional[str] = None
+    note: Optional[str] = None
+    category: Optional[str] = None
+    needs_check: Optional[bool] = None
+
+
+class PackIn(BaseModel):
+    product_id: int
+    qty: int = Field(1, ge=1, le=99)
+    move: bool = False                    # уже лежить в іншій коробці → перенести
+
+
+class UnpackIn(BaseModel):
+    product_id: int
+    qty: Optional[int] = Field(None, ge=1, le=99)   # None → усе, що лежить
+
+
+# ───────────────────────────── читання ───────────────────────────────────────
+
+@router.get("/scan")
+def scan(code: str = Query(..., min_length=1), db: Session = Depends(get_db),
+         actor: str = Depends(require_staff)):
+    """Що відсканували: товар (із місцем) або коробка (з вмістом)."""
+    parsed = parse_code(code)
+    if not parsed:
+        # Може, набрали номер руками або сканер прочитав чужий код.
+        found = _find_products_by_number(db, code, limit=10)
+        if not found:
+            raise HTTPException(status_code=404, detail="Це не код BMS і не номер товару")
+        locs = _locations(db, [p["id"] for p in found])
+        for p in found:
+            p["locations"] = locs.get(p["id"], [])
+        return {"kind": "products", "products": found}
+    if parsed["kind"] == "box":
+        return {"kind": "box", "box": box_detail(parsed["code"], db, actor)}
+    prod = _load_product(db, parsed["id"])
+    if not prod:
+        # Рядок зник (злиття/перейменування) — рятуємось номером зі стікера.
+        found = _find_products_by_number(db, parsed.get("number") or "", limit=10)
+        if not found:
+            raise HTTPException(status_code=404, detail="Товар зі стікера не знайдено")
+        locs = _locations(db, [p["id"] for p in found])
+        for p in found:
+            p["locations"] = locs.get(p["id"], [])
+        return {"kind": "products", "products": found, "stale_sticker": True}
+    prod["locations"] = _locations(db, [prod["id"]]).get(prod["id"], [])
+    return {"kind": "product", "product": prod}
+
+
+@router.get("/search")
+def search(q: str = Query(..., min_length=1), db: Session = Depends(get_db),
+           _: str = Depends(require_staff)):
+    found = _find_products_by_number(db, q, limit=20)
+    locs = _locations(db, [p["id"] for p in found])
+    for p in found:
+        p["locations"] = locs.get(p["id"], [])
+    return {"products": found}
+
+
+@router.get("/products/{product_id}")
+def product(product_id: int, db: Session = Depends(get_db), _: str = Depends(require_staff)):
+    prod = _load_product(db, product_id)
+    if not prod:
+        raise HTTPException(status_code=404, detail="Товар не знайдено")
+    prod["locations"] = _locations(db, [prod["id"]]).get(prod["id"], [])
+    return prod
+
+
+@router.get("/locations")
+def locations(product_ids: str = Query(..., description="id через кому"),
+              db: Session = Depends(get_db), _: str = Depends(require_staff)):
+    """Пакетно: де лежать товари (для колонки «Коробка» в BMS)."""
+    ids = [int(x) for x in product_ids.split(",") if x.strip().isdigit()][:2000]
+    return {"locations": {str(k): v for k, v in _locations(db, ids).items()}}
+
+
+@router.get("/boxes")
+def boxes(status: Optional[str] = None, db: Session = Depends(get_db),
+          _: str = Depends(require_staff)):
+    where = "WHERE b.status = :st" if status else "WHERE b.status <> 'archived'"
+    rows = db.execute(text(_box_summary_sql(where) + " ORDER BY b.code"),
+                      {"st": status} if status else {}).mappings().all()
+    return {"boxes": [_box_dict(dict(r)) for r in rows]}
+
+
+@router.get("/boxes/next-code")
+def boxes_next_code(category: str = Query(..., min_length=1), db: Session = Depends(get_db),
+                    _: str = Depends(require_staff)):
+    return {"code": next_box_code(db, category)}
+
+
+@router.get("/boxes/{code}")
+def box_detail(code: str, db: Session = Depends(get_db), _: str = Depends(require_staff)):
+    r = db.execute(text(_box_summary_sql("WHERE b.code = :c")), {"c": normalize_box_code(code)}).mappings().first()
+    if not r:
+        raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
+    box = _box_dict(dict(r))
+    items = db.execute(text("""
+        SELECT i.id AS item_id, i.product_id, i.productnumber AS snap_number, i.size AS snap_size,
+               i.color AS snap_color, i.qty, i.packed_at, i.packed_by
+        FROM wh_box_items i WHERE i.box_id = :b AND i.unpacked_at IS NULL
+        ORDER BY i.packed_at DESC
+    """), {"b": box["id"]}).mappings().all()
+    prods = {}
+    if items:
+        rows = db.execute(text(_PRODUCT_SQL + " WHERE p.id = ANY(:ids)"),
+                          {"ids": [int(i["product_id"]) for i in items]}).mappings().all()
+        prods = {int(r["id"]): _product_dict(dict(r)) for r in rows}
+    out = []
+    for i in items:
+        p = prods.get(int(i["product_id"]))
+        out.append({
+            "item_id": int(i["item_id"]), "product_id": int(i["product_id"]),
+            "qty": int(i["qty"]), "packed_at": i["packed_at"], "packed_by": i["packed_by"],
+            "product": p or {"id": int(i["product_id"]), "productnumber": i["snap_number"],
+                             "number": (i["snap_number"] or "").lstrip("#"), "size": i["snap_size"],
+                             "color": i["snap_color"], "missing": True},
+        })
+    box["contents"] = out
+    return box
+
+
+@router.get("/events")
+def events(box: Optional[str] = None, product_id: Optional[int] = None,
+           limit: int = Query(50, ge=1, le=500), db: Session = Depends(get_db),
+           _: str = Depends(require_staff)):
+    conds, params = [], {"lim": limit}
+    if box:
+        conds.append("box_code = :bc"); params["bc"] = normalize_box_code(box)
+    if product_id:
+        conds.append("product_id = :pid"); params["pid"] = int(product_id)
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    rows = db.execute(text(f"SELECT * FROM wh_events {where} ORDER BY at DESC, id DESC LIMIT :lim"),
+                      params).mappings().all()
+    return {"events": [dict(r) for r in rows]}
+
+
+# ───────────────────────────── коробки: запис ────────────────────────────────
+
+@router.post("/boxes", status_code=201)
+def box_create(payload: BoxCreate = Body(...), db: Session = Depends(get_db),
+               actor: str = Depends(require_staff)):
+    code = normalize_box_code(payload.code) if payload.code else next_box_code(db, payload.category or "")
+    category = (payload.category or re.match(r"^[A-ZА-ЯІЇЄҐ]+", code).group(0)).upper()
+    if _box_row(db, code):
+        raise HTTPException(status_code=409, detail=f"Коробка {code} уже є")
+    r = db.execute(text("""
+        INSERT INTO wh_boxes (code, category, title, location, note, needs_check, created_by)
+        VALUES (:code, :cat, :title, :loc, :note, :chk, :by) RETURNING *
+    """), {"code": code, "cat": category, "title": payload.title, "loc": payload.location,
+           "note": payload.note, "chk": payload.needs_check, "by": actor}).mappings().first()
+    box = dict(r)
+    _event(db, actor, "box_create", box=box, details={"title": payload.title})
+    db.commit()
+    return box_detail(code, db, actor)
+
+
+@router.patch("/boxes/{code}")
+def box_patch(code: str, payload: BoxPatch = Body(...), db: Session = Depends(get_db),
+              actor: str = Depends(require_staff)):
+    box = _box_row(db, code, for_update=True)
+    if not box:
+        raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
+    changes = {k: v for k, v in payload.dict().items() if v is not None}
+    if not changes:
+        return box_detail(code, db, actor)
+    sets = ", ".join(f"{k} = :{k}" for k in changes)
+    db.execute(text(f"UPDATE wh_boxes SET {sets}, updated_at = now() WHERE id = :id"),
+               {**changes, "id": box["id"]})
+    _event(db, actor, "box_edit", box=box, details=changes)
+    db.commit()
+    return box_detail(code, db, actor)
+
+
+@router.post("/boxes/{code}/seal")
+def box_seal(code: str, db: Session = Depends(get_db), actor: str = Depends(require_staff)):
+    box = _box_row(db, code, for_update=True)
+    if not box:
+        raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
+    db.execute(text("UPDATE wh_boxes SET status = 'sealed', sealed_at = now(), updated_at = now() WHERE id = :id"),
+               {"id": box["id"]})
+    _event(db, actor, "seal", box=box)
+    db.commit()
+    return box_detail(code, db, actor)
+
+
+@router.post("/boxes/{code}/open")
+def box_open(code: str, db: Session = Depends(get_db), actor: str = Depends(require_staff)):
+    box = _box_row(db, code, for_update=True)
+    if not box:
+        raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
+    db.execute(text("UPDATE wh_boxes SET status = 'open', updated_at = now() WHERE id = :id"), {"id": box["id"]})
+    _event(db, actor, "open", box=box)
+    db.commit()
+    return box_detail(code, db, actor)
+
+
+@router.post("/boxes/{code}/check")
+def box_check(code: str, db: Session = Depends(get_db), actor: str = Depends(require_staff)):
+    """Коробку звірено — знімаємо «Перевірити»."""
+    box = _box_row(db, code, for_update=True)
+    if not box:
+        raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
+    db.execute(text("UPDATE wh_boxes SET needs_check = FALSE, checked_at = now(), updated_at = now() WHERE id = :id"),
+               {"id": box["id"]})
+    _event(db, actor, "check", box=box)
+    db.commit()
+    return box_detail(code, db, actor)
+
+
+@router.delete("/boxes/{code}")
+def box_delete(code: str, force: bool = False, db: Session = Depends(get_db),
+               actor: str = Depends(require_staff)):
+    """Видалити коробку. З вмістом — лише force: усе всередині стає «без коробки»
+    (рядки закриваються, історія лишається); сама коробка → archived, не DELETE:
+    події посилаються на її код."""
+    box = _box_row(db, code, for_update=True)
+    if not box:
+        raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
+    n_open = db.execute(text("SELECT COUNT(*) FROM wh_box_items WHERE box_id = :b AND unpacked_at IS NULL"),
+                        {"b": box["id"]}).scalar() or 0
+    if n_open and not force:
+        raise HTTPException(status_code=409, detail=f"У коробці {box['code']} ще {n_open} позицій. Спершу розпакуйте або підтвердьте видалення з вмістом.")
+    if n_open:
+        db.execute(text("UPDATE wh_box_items SET unpacked_at = now(), unpacked_by = :by WHERE box_id = :b AND unpacked_at IS NULL"),
+                   {"b": box["id"], "by": actor})
+    db.execute(text("UPDATE wh_boxes SET status = 'archived', updated_at = now() WHERE id = :id"), {"id": box["id"]})
+    _event(db, actor, "box_delete", box=box, qty=int(n_open), details={"force": bool(force)})
+    db.commit()
+    return {"deleted": box["code"], "unpacked_items": int(n_open)}
+
+
+# ───────────────────────────── пакування ─────────────────────────────────────
+
+@router.post("/boxes/{code}/pack")
+def pack(code: str, payload: PackIn = Body(...), db: Session = Depends(get_db),
+         actor: str = Depends(require_staff)):
+    """Покласти товар у коробку. Якщо він уже лежить в іншій — 409 з місцем
+    (застосунок питає «перенести?»), або `move=true` → переносимо."""
+    box = _box_row(db, code, for_update=True)
+    if not box:
+        raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
+    if box["status"] == "archived":
+        raise HTTPException(status_code=409, detail=f"Коробку {box['code']} видалено")
+    prod = _load_product(db, payload.product_id)
+    if not prod:
+        raise HTTPException(status_code=404, detail="Товар не знайдено")
+    qty = int(payload.qty)
+
+    elsewhere = db.execute(text("""
+        SELECT i.id, i.qty, b.code FROM wh_box_items i JOIN wh_boxes b ON b.id = i.box_id
+        WHERE i.product_id = :pid AND i.unpacked_at IS NULL AND i.box_id <> :b
+        ORDER BY i.packed_at
+    """), {"pid": prod["id"], "b": box["id"]}).mappings().all()
+    if elsewhere and not payload.move:
+        raise HTTPException(status_code=409, detail={
+            "code": "elsewhere",
+            "message": f"{prod['number']} уже лежить у {', '.join(r['code'] for r in elsewhere)}",
+            "locations": [{"box_code": r["code"], "qty": int(r["qty"])} for r in elsewhere],
+        })
+    moved_from: List[str] = []
+    if elsewhere and payload.move:
+        left = qty
+        for r in elsewhere:
+            if left <= 0:
+                break
+            take = min(left, int(r["qty"]))
+            if take >= int(r["qty"]):
+                db.execute(text("UPDATE wh_box_items SET unpacked_at = now(), unpacked_by = :by WHERE id = :id"),
+                           {"id": r["id"], "by": actor})
+            else:
+                db.execute(text("UPDATE wh_box_items SET qty = qty - :t WHERE id = :id"), {"t": take, "id": r["id"]})
+            moved_from.append(r["code"])
+            left -= take
+
+    db.execute(text("""
+        INSERT INTO wh_box_items (box_id, product_id, productnumber, size, color, qty, packed_by)
+        VALUES (:b, :pid, :pnum, :size, :color, :qty, :by)
+        ON CONFLICT (box_id, product_id) WHERE unpacked_at IS NULL
+        DO UPDATE SET qty = wh_box_items.qty + EXCLUDED.qty, packed_at = now(), packed_by = EXCLUDED.packed_by
+    """), {"b": box["id"], "pid": prod["id"], "pnum": prod["productnumber"], "size": prod["size"],
+           "color": prod["color"], "qty": qty, "by": actor})
+    _event(db, actor, "move" if moved_from else "pack", box=box, product=prod, qty=qty,
+           details={"from": moved_from} if moved_from else None)
+    if box["status"] == "sealed":
+        # Клали в запечатану — значить її відкрили; чесно позначаємо.
+        db.execute(text("UPDATE wh_boxes SET status = 'open', updated_at = now() WHERE id = :id"), {"id": box["id"]})
+    db.commit()
+    prod["locations"] = _locations(db, [prod["id"]]).get(prod["id"], [])
+    return {"ok": True, "box": box["code"], "product": prod, "moved_from": moved_from,
+            "warning": ("Товар продано — стікер/пара мали б піти покупцю" if prod["available_qty"] <= 0 else None)}
+
+
+def _unpack_rows(db: Session, actor: str, product_id: int, box_id: Optional[int], qty: Optional[int]) -> List[Dict[str, Any]]:
+    rows = db.execute(text("""
+        SELECT i.id, i.qty, i.box_id, b.code FROM wh_box_items i JOIN wh_boxes b ON b.id = i.box_id
+        WHERE i.product_id = :pid AND i.unpacked_at IS NULL
+          AND (:b IS NULL OR i.box_id = :b)
+        ORDER BY i.packed_at FOR UPDATE OF i
+    """), {"pid": int(product_id), "b": box_id}).mappings().all()
+    done: List[Dict[str, Any]] = []
+    left = qty
+    for r in rows:
+        if left is not None and left <= 0:
+            break
+        take = int(r["qty"]) if left is None else min(left, int(r["qty"]))
+        if take >= int(r["qty"]):
+            db.execute(text("UPDATE wh_box_items SET unpacked_at = now(), unpacked_by = :by WHERE id = :id"),
+                       {"id": r["id"], "by": actor})
+        else:
+            db.execute(text("UPDATE wh_box_items SET qty = qty - :t WHERE id = :id"), {"t": take, "id": r["id"]})
+        done.append({"box_id": int(r["box_id"]), "box_code": r["code"], "qty": take})
+        if left is not None:
+            left -= take
+    return done
+
+
+@router.post("/boxes/{code}/unpack")
+def unpack_from_box(code: str, payload: UnpackIn = Body(...), db: Session = Depends(get_db),
+                    actor: str = Depends(require_staff)):
+    box = _box_row(db, code, for_update=True)
+    if not box:
+        raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
+    prod = _load_product(db, payload.product_id) or {"id": payload.product_id, "productnumber": None, "number": str(payload.product_id)}
+    done = _unpack_rows(db, actor, payload.product_id, box["id"], payload.qty)
+    if not done:
+        raise HTTPException(status_code=404, detail=f"{prod['number']} не лежить у {box['code']}")
+    for d in done:
+        _event(db, actor, "unpack", box=box, product=prod, qty=d["qty"])
+    db.commit()
+    return {"ok": True, "unpacked": done}
+
+
+@router.post("/unpack")
+def unpack_anywhere(payload: UnpackIn = Body(...), db: Session = Depends(get_db),
+                    actor: str = Depends(require_staff)):
+    """Вийняти товар, де б він не лежав (сканування товару → «Вийняти»)."""
+    prod = _load_product(db, payload.product_id) or {"id": payload.product_id, "productnumber": None, "number": str(payload.product_id)}
+    done = _unpack_rows(db, actor, payload.product_id, None, payload.qty)
+    if not done:
+        raise HTTPException(status_code=404, detail=f"{prod['number']} не лежить у жодній коробці")
+    for d in done:
+        _event(db, actor, "unpack", box={"id": d["box_id"], "code": d["box_code"]}, product=prod, qty=d["qty"])
+    db.commit()
+    return {"ok": True, "unpacked": done}
+
+
+@router.post("/boxes/{code}/unpack-all")
+def unpack_all(code: str, db: Session = Depends(get_db), actor: str = Depends(require_staff)):
+    box = _box_row(db, code, for_update=True)
+    if not box:
+        raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
+    rows = db.execute(text("""
+        SELECT product_id, productnumber, qty FROM wh_box_items WHERE box_id = :b AND unpacked_at IS NULL
+    """), {"b": box["id"]}).mappings().all()
+    db.execute(text("UPDATE wh_box_items SET unpacked_at = now(), unpacked_by = :by WHERE box_id = :b AND unpacked_at IS NULL"),
+               {"b": box["id"], "by": actor})
+    for r in rows:
+        _event(db, actor, "unpack", box=box, product={"id": r["product_id"], "productnumber": r["productnumber"]},
+               qty=int(r["qty"]), details={"all": True})
+    db.commit()
+    return {"ok": True, "unpacked_items": len(rows), "units": sum(int(r["qty"]) for r in rows)}

@@ -15,6 +15,7 @@ from images import URL_PREFIX as IMAGES_URL_PREFIX, get_images_dir
 from sharing import router as sharing_router
 from shop_info import how_to_buy
 from tg_business import router as tg_business_router
+from warehouse import ensure_warehouse_schema, router as warehouse_router
 
 # Документація API (Swagger/ReDoc/openapi.json) — за замовчуванням ВИМКНЕНА:
 # публічно не світимо структуру API (зокрема існування адмін-ендпоінта).
@@ -31,8 +32,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    # PATCH — захищений адмін-запис (публікація/опис); POST — «Обране» користувача
-    allow_methods=["GET", "PATCH", "POST", "OPTIONS"],
+    # PATCH — захищений адмін-запис (публікація/опис); POST — «Обране» користувача;
+    # DELETE — коробки складу (лише з токеном/initData працівника)
+    allow_methods=["GET", "PATCH", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -66,6 +68,9 @@ app.include_router(favorites_router)
 app.include_router(analytics_router)
 # Вебхук Telegram Business: надісланий лист менеджеру → рядок у «Замовленнях»
 app.include_router(tg_business_router)
+# Склад (коробки, вміст, події) — Mini App «BMS Склад» + десктопна BMS. Доступ лише
+# працівникам (initData бота складу) або BMS (адмін-токен).
+app.include_router(warehouse_router)
 # Адреси товарів (/t/<id>) і корінь із мета-тегами. ОБОВ'ЯЗКОВО до mount("/") нижче:
 # інакше статика перехопить «/» і прев'ю посилань не буде.
 app.include_router(sharing_router)
@@ -85,7 +90,7 @@ def _ensure_catalog_tables() -> None:
         return
     for ensure in (_ensure_views_table, _ensure_favorites_table, ensure_analytics_tables,
                    _ensure_description_public_column, _ensure_discount_columns,
-                   _ensure_featured_order_column):
+                   _ensure_featured_order_column, ensure_warehouse_schema):
         db = SessionLocal()
         try:
             ensure(db)
