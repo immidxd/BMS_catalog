@@ -196,6 +196,7 @@ export function App() {
         toast('warn', 'Правка в черзі — застосується, щойно BMS на компʼютері буде запущена.');
         return;
       }
+      toast('ok', 'Надіслано — BMS зберігає…');
       for (let i = 0; i < 20; i++) {
         await sleep(2000);
         const j = await api.job(job.id).catch(() => null);
