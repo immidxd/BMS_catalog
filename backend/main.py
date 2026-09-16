@@ -15,7 +15,7 @@ from images import URL_PREFIX as IMAGES_URL_PREFIX, get_images_dir
 from sharing import router as sharing_router
 from shop_info import how_to_buy
 from tg_business import router as tg_business_router
-from warehouse import ensure_warehouse_schema, router as warehouse_router
+from warehouse import ensure_bot_menu_button, ensure_warehouse_schema, router as warehouse_router
 
 # Документація API (Swagger/ReDoc/openapi.json) — за замовчуванням ВИМКНЕНА:
 # публічно не світимо структуру API (зокрема існування адмін-ендпоінта).
@@ -74,6 +74,17 @@ app.include_router(warehouse_router)
 # Адреси товарів (/t/<id>) і корінь із мета-тегами. ОБОВ'ЯЗКОВО до mount("/") нижче:
 # інакше статика перехопить «/» і прев'ю посилань не буде.
 app.include_router(sharing_router)
+
+
+@app.on_event("startup")
+def _ensure_warehouse_bot_menu() -> None:
+    """Кнопка меню бота складу → /wh (через Bot API, токеном із WAREHOUSE_BOT_TOKEN).
+    Мережевий збій некритичний — застосунок і так відкриється, якщо кнопку
+    поставили вручну."""
+    try:
+        ensure_bot_menu_button()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @app.on_event("startup")

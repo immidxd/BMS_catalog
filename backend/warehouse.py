@@ -107,6 +107,8 @@ def whoami(x_telegram_init_data: Optional[str] = Header(None)):
         "has_spaces": wh_token_raw != wh_token_raw.strip() or " " in wh_token_raw.strip(),
     }
     bot_info = _bot_identity(_wh_bot_token())
+    menu = bot_menu_button((os.getenv("WAREHOUSE_BOT_TOKEN") or "").strip()) if wh_token_set else None
+    app_url = public_app_url()
     sig_wh = bool(x_telegram_init_data and telegram_profile_from_init_data(x_telegram_init_data, token=_wh_bot_token()))
     sig_shop = bool(x_telegram_init_data and _bot_token() and telegram_profile_from_init_data(x_telegram_init_data, token=_bot_token()))
     in_staff = uid is not None and uid in _staff_ids()
@@ -117,6 +119,9 @@ def whoami(x_telegram_init_data: Optional[str] = Header(None)):
         problems.append("WAREHOUSE_BOT_TOKEN не схожий на токен бота (формат 1234567890:AAF…).")
     if wh_token_set and bot_info and not bot_info.get("ok"):
         problems.append("Telegram не приймає WAREHOUSE_BOT_TOKEN (getMe: " + str(bot_info.get("error")) + ").")
+    if wh_token_set and menu and menu.get("ok") and app_url and menu.get("url") != app_url:
+        problems.append(f"Кнопка меню бота веде не на цей застосунок ({menu.get('url') or 'не задана'}); "
+                        f"сервер сам виставить {app_url} при наступному старті.")
     if not x_telegram_init_data:
         problems.append("Застосунок відкрито не з Telegram (немає initData).")
     else:
@@ -137,8 +142,55 @@ def whoami(x_telegram_init_data: Optional[str] = Header(None)):
             "server": {"warehouse_bot_token_set": wh_token_set, "staff_ids_set": staff_set,
                        "token_shape": token_shape,
                        "warehouse_bot": ({"username": bot_info.get("username"), "id": bot_info.get("id")}
-                                         if bot_info and bot_info.get("ok") else None)},
+                                         if bot_info and bot_info.get("ok") else None),
+                       "menu_button": menu, "app_url": app_url},
             "problems": problems}
+
+
+def public_app_url() -> Optional[str]:
+    """Публічна адреса Mini App складу: WAREHOUSE_PUBLIC_URL або домен Railway."""
+    explicit = (os.getenv("WAREHOUSE_PUBLIC_URL") or "").strip().rstrip("/")
+    if explicit:
+        return explicit if explicit.endswith("/wh") else explicit + "/wh"
+    domain = (os.getenv("RAILWAY_PUBLIC_DOMAIN") or "").strip()
+    return f"https://{domain}/wh" if domain else None
+
+
+def bot_menu_button(token: str) -> Optional[Dict[str, Any]]:
+    """Куди зараз веде кнопка меню бота (getChatMenuButton) — публічне налаштування."""
+    import requests as _rq
+    if not token:
+        return None
+    try:
+        r = _rq.get(f"https://api.telegram.org/bot{token}/getChatMenuButton", timeout=6).json()
+        if not r.get("ok"):
+            return {"ok": False, "error": r.get("description")}
+        btn = r.get("result") or {}
+        return {"ok": True, "type": btn.get("type"), "text": btn.get("text"),
+                "url": (btn.get("web_app") or {}).get("url")}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)[:80]}
+
+
+def ensure_bot_menu_button() -> Optional[str]:
+    """При старті: якщо є токен бота складу й публічна адреса — поставити боту
+    кнопку меню «Склад» → /wh (setChatMenuButton). Це знімає крок BotFather і
+    гарантує, що застосунок відкривається саме тим ботом, чиїм токеном сервер
+    перевіряє підпис. Ідемпотентно: не чіпає, якщо вже вказує куди треба."""
+    import requests as _rq
+    token = (os.getenv("WAREHOUSE_BOT_TOKEN") or "").strip()
+    url = public_app_url()
+    if not token or not url:
+        return None
+    cur = bot_menu_button(token)
+    if cur and cur.get("ok") and cur.get("url") == url:
+        return url
+    try:
+        r = _rq.post(f"https://api.telegram.org/bot{token}/setChatMenuButton", timeout=8,
+                     json={"menu_button": {"type": "web_app", "text": "Склад", "web_app": {"url": url}}}).json()
+        return url if r.get("ok") else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 _BOT_IDENTITY_CACHE: Dict[str, Any] = {}
