@@ -120,5 +120,20 @@ async def _no_cache_index(request, call_next):
 
 # Продакшн-збірка фронтенду (npm run build) — віддається цим же сервером
 _frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+
+
+# Mini App складу — друга сторінка тієї ж збірки (wh.html). Адреса /wh — саме її
+# вказано боту «BMS Склад» у BotFather. Оголошено ДО mount("/"), інакше статика
+# перехопить шлях.
+@app.get("/wh", include_in_schema=False)
+def _warehouse_app():
+    from fastapi.responses import FileResponse
+    path = os.path.join(_frontend_dist, "wh.html")
+    if not os.path.isfile(path):
+        return {"detail": "Mini App складу ще не зібрано (npm run build)"}
+    return FileResponse(path, media_type="text/html",
+                        headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
 if os.path.isdir(_frontend_dist):
     app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")

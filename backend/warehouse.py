@@ -553,6 +553,13 @@ def pack(code: str, payload: PackIn = Body(...), db: Session = Depends(get_db),
             "warning": ("Товар продано — стікер/пара мали б піти покупцю" if prod["available_qty"] <= 0 else None)}
 
 
+def _reopen_if_sealed(db: Session, box_ids: List[int]) -> None:
+    """Вийняли із запечатаної — отже її відкрили; статус має казати правду."""
+    if box_ids:
+        db.execute(text("UPDATE wh_boxes SET status = 'open', updated_at = now() "
+                        "WHERE id = ANY(:ids) AND status = 'sealed'"), {"ids": list(set(box_ids))})
+
+
 def _unpack_rows(db: Session, actor: str, product_id: int, box_id: Optional[int], qty: Optional[int]) -> List[Dict[str, Any]]:
     rows = db.execute(text("""
         SELECT i.id, i.qty, i.box_id, b.code FROM wh_box_items i JOIN wh_boxes b ON b.id = i.box_id
@@ -589,6 +596,7 @@ def unpack_from_box(code: str, payload: UnpackIn = Body(...), db: Session = Depe
         raise HTTPException(status_code=404, detail=f"{prod['number']} не лежить у {box['code']}")
     for d in done:
         _event(db, actor, "unpack", box=box, product=prod, qty=d["qty"])
+    _reopen_if_sealed(db, [box["id"]])
     db.commit()
     return {"ok": True, "unpacked": done}
 
@@ -603,6 +611,7 @@ def unpack_anywhere(payload: UnpackIn = Body(...), db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail=f"{prod['number']} не лежить у жодній коробці")
     for d in done:
         _event(db, actor, "unpack", box={"id": d["box_id"], "code": d["box_code"]}, product=prod, qty=d["qty"])
+    _reopen_if_sealed(db, [d["box_id"] for d in done])
     db.commit()
     return {"ok": True, "unpacked": done}
 

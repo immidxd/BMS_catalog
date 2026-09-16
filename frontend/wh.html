@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>BMS Склад</title>
+    <link rel="preconnect" href="https://pub-2002131bdaa64e7cb898ccac677a16e8.r2.dev" crossorigin />
+    <!-- Самолікування застряглого HTML після деплою — як у вітрини (index.html). -->
+    <script>
+      (function () {
+        var KEY = 'bmswh-asset-reload';
+        window.addEventListener('error', function (e) {
+          var el = e.target;
+          if (!el || (el.tagName !== 'SCRIPT' && el.tagName !== 'LINK')) return;
+          if (!/\/assets\//.test(el.src || el.href || '')) return;
+          try {
+            var last = Number(sessionStorage.getItem(KEY) || 0);
+            if (Date.now() - last < 60000) return;
+            sessionStorage.setItem(KEY, String(Date.now()));
+          } catch (err) { /* приватний режим */ }
+          location.replace(location.pathname + '?v=' + Date.now());
+        }, true);
+      })();
+    </script>
+    <!-- Офіційний SDK Telegram Mini Apps: нативний QR-сканер, тема, haptics -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/wh/main.tsx"></script>
+  </body>
+</html>
