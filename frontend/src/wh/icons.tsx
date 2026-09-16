@@ -83,3 +83,6 @@ export const IPhoto = ({ size = 24, ...p }: P) => (
 export const IRefresh = ({ size = 24, ...p }: P) => (
   <svg {...base(size, p)}><path d="M20 12a8 8 0 1 1-2.3-5.7" /><path d="M20 4v5h-5" /></svg>
 );
+export const IPrinter = ({ size = 24, ...p }: P) => (
+  <svg {...base(size, p)}><path d="M7 8V4h10v4M7 16H4.5A1.5 1.5 0 0 1 3 14.5v-4A2.5 2.5 0 0 1 5.5 8h13A2.5 2.5 0 0 1 21 10.5v4a1.5 1.5 0 0 1-1.5 1.5H17" /><rect x="7" y="13" width="10" height="7" rx="1" /></svg>
+);

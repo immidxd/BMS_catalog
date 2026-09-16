@@ -94,8 +94,16 @@ export type WhoAmI = {
   problems: string[];
 };
 
+export type PrintJob = { id: number; kind: 'box_label' | 'stickers'; status: string; agent_seen_at?: string | null };
+export type PrintAgent = { online: boolean; agent: string | null; last_seen: string | null; printer: string | null; queued: number };
+
 export const api = {
   whoami: () => req<WhoAmI>('GET', '/api/wh/whoami'),
+  printAgent: () => req<PrintAgent>('GET', '/api/wh/print-agent/status'),
+  printBoxLabel: (code: string, copies = 1) =>
+    req<PrintJob>('POST', '/api/wh/print-jobs', { kind: 'box_label', code, copies }),
+  printStickers: (product_ids: number[], copies = 1, layout = '2x2') =>
+    req<PrintJob>('POST', '/api/wh/print-jobs', { kind: 'stickers', product_ids, copies, layout }),
   scan: (code: string) => req<ScanResult>('GET', `/api/wh/scan?${q({ code })}`),
   search: (text: string) => req<{ products: Product[] }>('GET', `/api/wh/search?${q({ q: text })}`),
   product: (id: number) => req<Product>('GET', `/api/wh/products/${id}`),

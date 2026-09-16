@@ -10,7 +10,7 @@ import { canScan, confirmDialog, haptic, scanMany, scanOnce } from './scanner';
 import { tg, isInTelegram } from '../telegram';
 import {
   IAlert, IBox, IBoxes, ICheck, IChevron, IEdit, ILock, IMore, IMove, IPackIn, IPackOut,
-  IPhoto, IPlus, IRefresh, IScan, ISearch, ITrash, IUnlock, IX,
+  IPhoto, IPlus, IPrinter, IRefresh, IScan, ISearch, ITrash, IUnlock, IX,
 } from './icons';
 
 type View =
@@ -171,6 +171,18 @@ export function App() {
     }
   }, [toast]);
 
+  // Друк з телефона: завдання в хмару → агент BMS у крамниці друкує на Xprinter.
+  const printViaAgent = useCallback(async (fn: () => Promise<{ id: number; agent_seen_at?: string | null }>, what: string) => {
+    setBusy(true);
+    try {
+      const [job, agent] = await Promise.all([fn(), api.printAgent().catch(() => null)]);
+      if (agent && agent.online) toast('ok', `${what} — друкується (${agent.printer ? 'принтер у мережі' : 'BMS'})`);
+      else toast('warn', `${what} — у черзі. Надрукується, щойно BMS на компʼютері буде запущена.`);
+      return job;
+    } catch (e) { toast('err', errText(e, 'Не вдалося поставити на друк')); return null; }
+    finally { setBusy(false); }
+  }, [toast]);
+
   const refreshBox = useCallback(async (code: string) => {
     try { replace({ name: 'box', box: await api.box(code) }); } catch { /* ignore */ }
   }, [replace]);
@@ -220,6 +232,7 @@ export function App() {
           }}
           onPickBox={(qty) => push({ name: 'boxes', pickFor: { product: view.product, qty } })}
           onNewBox={(qty) => push({ name: 'newBox', pickFor: { product: view.product, qty } })}
+          onPrintSticker={() => void printViaAgent(() => api.printStickers([view.product.id], 1), `Стікер ${view.product.number}`)}
           onUnpack={async (boxCode, qty) => {
             setBusy(true);
             try {
@@ -235,6 +248,7 @@ export function App() {
         <BoxScreen box={view.box} busy={busy} setBusy={setBusy} toast={toast}
           onRefresh={() => refreshBox(view.box.code)}
           onSession={() => push({ name: 'session', box: view.box })}
+          onPrintLabel={() => void printViaAgent(() => api.printBoxLabel(view.box.code, 1), `Етикетка ${view.box.code}`)}
           onDeleted={() => home()}
           onOpenProduct={p => push({ name: 'product', product: p })} />
       )}
@@ -401,10 +415,10 @@ function Choose({ products, stale, onPick }: { products: Product[]; stale?: bool
 
 /* ───────────────────────────── Товар ─────────────────────────────────────── */
 
-function ProductScreen({ product: p, busy, onScanBox, onPickBox, onNewBox, onUnpack, onRefresh }: {
+function ProductScreen({ product: p, busy, onScanBox, onPickBox, onNewBox, onUnpack, onRefresh, onPrintSticker }: {
   product: Product; busy: boolean;
   onScanBox: (qty: number) => void; onPickBox: (qty: number) => void; onNewBox: (qty: number) => void;
-  onUnpack: (boxCode: string, qty?: number) => void; onRefresh: () => void;
+  onUnpack: (boxCode: string, qty?: number) => void; onRefresh: () => void; onPrintSticker: () => void;
 }) {
   const sold = p.available_qty <= 0;
   const maxQty = Math.max(1, p.available_qty || p.quantity || 1);
@@ -416,7 +430,10 @@ function ProductScreen({ product: p, busy, onScanBox, onPickBox, onNewBox, onUnp
   return (
     <>
       <Header title="Товар" sub={[p.brand, p.type].filter(Boolean).join(' · ') || undefined}
-        right={<button className="wh-iconbtn" onClick={onRefresh} title="Оновити"><IRefresh size={22} /></button>} />
+        right={<>
+          <button className="wh-iconbtn" onClick={onPrintSticker} disabled={busy} title="Надрукувати стікер (аркуш 4 шт) на принтері у крамниці"><IPrinter size={22} /></button>
+          <button className="wh-iconbtn" onClick={onRefresh} title="Оновити"><IRefresh size={22} /></button>
+        </>} />
       <div className="wh-body">
         <div className="wh-card wh-product">
           <div className="wh-product-top">
@@ -490,11 +507,11 @@ function ProductScreen({ product: p, busy, onScanBox, onPickBox, onNewBox, onUnp
 
 /* ───────────────────────────── Коробка ───────────────────────────────────── */
 
-function BoxScreen({ box, busy, setBusy, toast, onRefresh, onSession, onDeleted, onOpenProduct }: {
+function BoxScreen({ box, busy, setBusy, toast, onRefresh, onSession, onDeleted, onOpenProduct, onPrintLabel }: {
   box: Box; busy: boolean; setBusy: (b: boolean) => void;
   toast: (k: Toast['kind'], t: string) => void;
   onRefresh: () => Promise<void>; onSession: () => void; onDeleted: () => void;
-  onOpenProduct: (p: Product) => void;
+  onOpenProduct: (p: Product) => void; onPrintLabel: () => void;
 }) {
   const [edit, setEdit] = useState(false);
   const [title, setTitle] = useState(box.title || '');
@@ -580,6 +597,7 @@ function BoxScreen({ box, busy, setBusy, toast, onRefresh, onSession, onDeleted,
 
       {more && (
         <Sheet title={`Коробка ${box.code}`} onClose={() => setMore(false)}>
+          <button className="wh-btn primary" disabled={busy} onClick={() => { setMore(false); onPrintLabel(); }}><IPrinter size={26} /> Надрукувати етикетку</button>
           {box.status === 'sealed'
             ? <button className="wh-btn" disabled={busy} onClick={() => { setMore(false); void run(() => api.open(box.code), 'Коробку відкрито'); }}><IUnlock size={26} /> Відкрити</button>
             : <button className="wh-btn" disabled={busy || box.status === 'archived'} onClick={() => { setMore(false); void run(() => api.seal(box.code), 'Запечатано'); }}><ILock size={26} /> Запечатати</button>}
@@ -615,6 +633,29 @@ function SessionScreen({ box, packInto, toast, onDone }: {
   const [scanning, setScanning] = useState(false);
   const stopRef = useRef<() => void>(() => {});
   const total = useMemo(() => log.reduce((s, l) => s + l.qty, 0), [log]);
+  // Без стікера (лише бірка з номером): пошук за номером → вибір розміру → у коробку.
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState<Product[] | null>(null);
+  const [searching, setSearching] = useState(false);
+
+  const packProduct = async (p: Product) => {
+    if (p.available_qty <= 0) { toast('warn', `${p.number} ПРОДАНО — не кладу`); return; }
+    const done = await packInto(box, p, 1);
+    if (done) { setLog(l => [{ number: p.number, size: p.size, qty: 1 }, ...l]); setHits(null); setQ(''); }
+  };
+
+  const searchByNumber = async () => {
+    const text = q.trim();
+    if (!text) return;
+    setSearching(true);
+    try {
+      const r = await api.search(text);
+      if (r.products.length === 0) { toast('warn', `«${text}» не знайдено`); setHits(null); }
+      else if (r.products.length === 1) await packProduct(r.products[0]);
+      else setHits(r.products);
+    } catch (e) { toast('err', errText(e, 'Пошук не вдався')); }
+    finally { setSearching(false); }
+  };
 
   const start = () => {
     setScanning(true);
@@ -641,6 +682,28 @@ function SessionScreen({ box, packInto, toast, onDone }: {
           <div className="wh-label">Покладено за цю сесію</div>
           <div className="wh-counter">{total}</div>
         </div>
+        <form className="wh-search" onSubmit={e => { e.preventDefault(); void searchByNumber(); }}>
+          <ISearch size={24} />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Без стікера: номер з бірки" inputMode="text" autoCapitalize="characters" autoCorrect="off" />
+          <button type="submit" disabled={searching || !q.trim()}>{searching ? '…' : 'Покласти'}</button>
+        </form>
+        {hits && (
+          <div className="wh-card flush">
+            <div className="wh-card-head" style={{ padding: '12px 16px 4px' }}><span className="wh-label">{hits[0].number} · який розмір кладу?</span><button className="wh-link" onClick={() => setHits(null)}>закрити</button></div>
+            <div className="wh-list">
+              {hits.map(p => (
+                <button key={p.id} className="wh-item" onClick={() => void packProduct(p)} disabled={p.available_qty <= 0}>
+                  <Photo src={p.image} cls="wh-thumb" />
+                  <span className="wh-item-main">
+                    <span className="wh-item-title">{p.size || '—'}{p.available_qty <= 0 && <span className="wh-chip err sm">продано</span>}{p.locations.length > 0 && <span className="wh-chip sm">у {p.locations.map(l => l.box_code).join(', ')}</span>}</span>
+                    <span className="wh-item-sub">{[p.brand, p.model, p.color].filter(Boolean).join(' · ')}</span>
+                  </span>
+                  <span className="wh-item-right"><IPackIn size={24} /></span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {log.length > 0 && (
           <div className="wh-card flush"><div className="wh-list">
             {log.map((l, i) => (
@@ -651,7 +714,7 @@ function SessionScreen({ box, packInto, toast, onDone }: {
             ))}
           </div></div>
         )}
-        {log.length === 0 && <div className="wh-hint">Натисніть «Сканувати» і наводьте камеру на стікери по черзі — камера не закривається між сканами, кожен товар підтверджується вібрацією.</div>}
+        {log.length === 0 && !hits && <div className="wh-hint">«Сканувати» — наводьте камеру на стікери по черзі, камера не закривається між сканами. Без стікера — введіть номер з бірки вище.</div>}
       </div>
       <Bar>
         <button className="wh-btn narrow" onClick={() => { stopRef.current(); onDone(); }} title="Завершити"><IX size={28} /></button>
@@ -739,7 +802,7 @@ function NewBoxScreen({ onCreated, toast }: { onCreated: (b: Box) => void; toast
           <input className="wh-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="Назва (що всередині)" />
           <input className="wh-input" value={loc} onChange={e => setLoc(e.target.value)} placeholder="Де стоїть (стелаж, полиця)" />
         </div>
-        <div className="wh-hint">Етикетку коробки (QR <b>bms:b:{code || '…'}</b>) друкує BMS: Склад → коробка → «Етикетка».</div>
+        <div className="wh-hint">Етикетку коробки (QR <b>bms:b:{code || '…'}</b>) можна надрукувати одразу після створення: «···» → «Надрукувати етикетку».</div>
       </div>
       <Bar>
         <button className="wh-btn primary huge" disabled={busy || !code.trim()} onClick={create}><IPlus size={28} /> Створити {code}</button>

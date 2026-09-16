@@ -22,6 +22,7 @@ import hmac
 import json
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -638,6 +639,113 @@ def box_delete(code: str, force: bool = False, db: Session = Depends(get_db),
     _event(db, actor, "box_delete", box=box, qty=int(n_open), details={"force": bool(force)})
     db.commit()
     return {"deleted": box["code"], "unpacked_items": int(n_open)}
+
+
+# ───────────────────────────── черга друку (телефон → BMS) ───────────────────
+
+class PrintJobIn(BaseModel):
+    kind: str = Field(..., pattern="^(box_label|stickers)$")
+    code: Optional[str] = None                  # box_label
+    product_ids: Optional[List[int]] = None     # stickers
+    copies: int = Field(1, ge=1, le=20)
+    layout: str = "2x2"
+
+
+class PrintJobDone(BaseModel):
+    ok: bool = True
+    error: Optional[str] = None
+
+
+def _job_dict(r: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: r[k] for k in ("id", "kind", "payload", "status", "created_by", "created_at",
+                              "claimed_at", "agent", "finished_at", "error")}
+
+
+@router.post("/print-jobs", status_code=201)
+def print_job_create(payload: PrintJobIn = Body(...), db: Session = Depends(get_db),
+                     actor: str = Depends(require_staff)):
+    """Поставити завдання на друк (виконає агент BMS у крамниці)."""
+    if payload.kind == "box_label":
+        code = normalize_box_code(payload.code or "")
+        if not _box_row(db, code):
+            raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
+        data = {"code": code, "copies": payload.copies}
+    else:
+        ids = [int(i) for i in (payload.product_ids or []) if i]
+        if not ids:
+            raise HTTPException(status_code=400, detail="Не передано товарів")
+        data = {"product_ids": ids, "copies": payload.copies, "layout": payload.layout}
+    # Чи є кому друкувати: агент відмічається при кожному опитуванні.
+    agent_seen = db.execute(text("SELECT MAX(seen_at) FROM wh_agents")).scalar()
+    r = db.execute(text("""
+        INSERT INTO wh_print_jobs (kind, payload, created_by)
+        VALUES (:kind, CAST(:payload AS jsonb), :by) RETURNING *
+    """), {"kind": payload.kind, "payload": json.dumps(data, ensure_ascii=False), "by": actor}).mappings().first()
+    db.commit()
+    return {**_job_dict(dict(r)), "agent_seen_at": agent_seen}
+
+
+@router.get("/print-jobs")
+def print_jobs(status: str = Query("queued"), limit: int = Query(20, ge=1, le=100),
+               db: Session = Depends(get_db), _: str = Depends(require_staff)):
+    rows = db.execute(text(
+        "SELECT * FROM wh_print_jobs WHERE status = :st ORDER BY created_at LIMIT :lim"
+    ), {"st": status, "lim": limit}).mappings().all()
+    return {"jobs": [_job_dict(dict(r)) for r in rows]}
+
+
+@router.post("/print-jobs/{job_id}/claim")
+def print_job_claim(job_id: int, agent: str = Query("bms"), db: Session = Depends(get_db),
+                    _: str = Depends(require_staff)):
+    """Агент бере завдання (лише якщо воно ще в черзі — захист від двох агентів)."""
+    r = db.execute(text("""
+        UPDATE wh_print_jobs SET status = 'printing', claimed_at = now(), agent = :agent
+        WHERE id = :id AND status = 'queued' RETURNING *
+    """), {"id": job_id, "agent": agent[:64]}).mappings().first()
+    db.commit()
+    if not r:
+        raise HTTPException(status_code=409, detail="Завдання вже взято або скасовано")
+    return _job_dict(dict(r))
+
+
+@router.post("/print-jobs/{job_id}/done")
+def print_job_done(job_id: int, payload: PrintJobDone = Body(...), db: Session = Depends(get_db),
+                   _: str = Depends(require_staff)):
+    db.execute(text("""
+        UPDATE wh_print_jobs SET status = :st, finished_at = now(), error = :err WHERE id = :id
+    """), {"id": job_id, "st": "done" if payload.ok else "failed", "err": (payload.error or None)})
+    db.commit()
+    return {"id": job_id, "status": "done" if payload.ok else "failed"}
+
+
+@router.post("/print-jobs/{job_id}/cancel")
+def print_job_cancel(job_id: int, db: Session = Depends(get_db), _: str = Depends(require_staff)):
+    db.execute(text("UPDATE wh_print_jobs SET status = 'cancelled', finished_at = now() "
+                    "WHERE id = :id AND status = 'queued'"), {"id": job_id})
+    db.commit()
+    return {"id": job_id, "status": "cancelled"}
+
+
+@router.post("/print-agent/heartbeat")
+def print_agent_heartbeat(agent: str = Query("bms"), printer: Optional[str] = Query(None),
+                          db: Session = Depends(get_db), _: str = Depends(require_staff)):
+    """Агент повідомляє, що живий і який принтер бачить (телефон покаже «офлайн»,
+    якщо пульсу нема понад хвилину)."""
+    db.execute(text("""
+        INSERT INTO wh_agents (agent, seen_at, printer) VALUES (:agent, now(), :printer)
+        ON CONFLICT (agent) DO UPDATE SET seen_at = now(), printer = EXCLUDED.printer
+    """), {"agent": agent[:64], "printer": (printer or None)})
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/print-agent/status")
+def print_agent_status(db: Session = Depends(get_db), _: str = Depends(require_staff)):
+    r = db.execute(text("SELECT agent, seen_at, printer FROM wh_agents ORDER BY seen_at DESC LIMIT 1")).mappings().first()
+    queued = db.execute(text("SELECT COUNT(*) FROM wh_print_jobs WHERE status = 'queued'")).scalar()
+    online = bool(r and (datetime.now(timezone.utc) - r["seen_at"]).total_seconds() < 90)
+    return {"online": online, "agent": r["agent"] if r else None, "last_seen": r["seen_at"] if r else None,
+            "printer": r["printer"] if r else None, "queued": int(queued or 0)}
 
 
 # ───────────────────────────── пакування ─────────────────────────────────────

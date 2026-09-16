@@ -64,3 +64,26 @@ CREATE TABLE IF NOT EXISTS wh_events (
 );
 CREATE INDEX IF NOT EXISTS ix_wh_events_box ON wh_events (box_id, at DESC);
 CREATE INDEX IF NOT EXISTS ix_wh_events_product ON wh_events (product_id, at DESC);
+
+-- Черга друку з телефона. Принтер стоїть у локальній мережі крамниці (за
+-- мостом на Windows-ПК), з хмари до нього шляху нема — тому Mini App кладе
+-- завдання сюди, а агент друку в BMS (на Mac) забирає їх і друкує локально.
+CREATE TABLE IF NOT EXISTS wh_print_jobs (
+    id          BIGSERIAL PRIMARY KEY,
+    kind        TEXT NOT NULL,                     -- box_label | stickers
+    payload     JSONB NOT NULL,                    -- {code} | {product_ids:[..], copies, layout}
+    status      TEXT NOT NULL DEFAULT 'queued',    -- queued | printing | done | failed | cancelled
+    created_by  TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    claimed_at  TIMESTAMPTZ,
+    agent       TEXT,                              -- хто друкує («bms@Mac»)
+    finished_at TIMESTAMPTZ,
+    error       TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_wh_print_jobs_status ON wh_print_jobs (status, created_at);
+-- Пульс агента друку: коли BMS востаннє опитувала чергу (телефон показує «офлайн»).
+CREATE TABLE IF NOT EXISTS wh_agents (
+    agent    TEXT PRIMARY KEY,
+    seen_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    printer  TEXT
+);
