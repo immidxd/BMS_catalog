@@ -219,6 +219,15 @@ export function App() {
   );
 }
 
+/* Фото з заглушкою: у товарів без знімків посилання може не відкриватись —
+   замість зламаної іконки показуємо порожню рамку. */
+function Photo({ src, cls }: { src: string | null; cls: string }) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => setBroken(false), [src]);
+  if (!src || broken) return <div className={`${cls} empty`}>{cls === 'wh-photo' ? 'без фото' : ''}</div>;
+  return <img src={src} alt="" className={cls} onError={() => setBroken(true)} />;
+}
+
 /* ───────────────────────────── Головна ───────────────────────────────────── */
 
 function Home({ busy, onScan, onSearch, onBoxes }: {
@@ -273,7 +282,7 @@ function Choose({ products, stale, onPick }: { products: Product[]; stale?: bool
       <div className="wh-label">Який саме?</div>
       {products.map(p => (
         <button key={p.id} className="wh-row" onClick={() => onPick(p)}>
-          {p.image ? <img src={p.image} alt="" className="wh-thumb" /> : <div className="wh-thumb empty" />}
+          <Photo src={p.image} cls="wh-thumb" />
           <div className="wh-row-main">
             <div className="wh-row-title">{p.number} <b>{p.size}</b></div>
             <div className="wh-row-sub">{[p.brand, p.model, p.color].filter(Boolean).join(' · ')}</div>
@@ -305,7 +314,7 @@ function ProductScreen({ product: p, busy, onPack, onUnpack, onNewBox, onRefresh
   return (
     <div className="wh-screen">
       <div className="wh-product-head">
-        {p.image ? <img src={p.image} alt="" className="wh-photo" /> : <div className="wh-photo empty">без фото</div>}
+        <Photo src={p.image} cls="wh-photo" />
         <div className="wh-product-info">
           <div className="wh-number">{p.number}</div>
           <div className="wh-size">{p.size}{p.insole ? <span className="wh-insole"> · {p.insole} см</span> : null}</div>
