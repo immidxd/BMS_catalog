@@ -64,9 +64,17 @@ def _file_version(abs_path: str) -> str:
 
 
 def _photo_url(relpath: str, version: str = "") -> str:
-    """URL фото: R2 CDN якщо налаштовано, інакше локальний статик-маунт. + готовий ?v=."""
+    """URL фото: R2 CDN якщо налаштовано, інакше локальний статик-маунт, + cache-bust `?v=`.
+
+    Версія приходить у ДВОХ форматах: з диска (`_file_version`) — уже готове
+    `?v=<mtime+size>`; з `catalog_images`, яку синхрон наповнює з `photo_r2_index`
+    BMS, — голий md5. Без нормалізації хеш приклеювався до імені файлу
+    (`…_01.webpfac63…` → 404) — так 15–16.09.2026 у вітрині зникли всі фото."""
     base = f"{R2_PUBLIC_BASE_URL}/{quote(relpath)}" if R2_PUBLIC_BASE_URL else f"{URL_PREFIX}/{quote(relpath)}"
-    return base + (version or "")
+    v = (version or "").strip()
+    if v and not v.startswith("?"):
+        v = f"?v={quote(v)}"
+    return base + v
 
 
 def _with_width(url: str, width: int) -> str:
