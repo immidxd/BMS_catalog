@@ -65,13 +65,13 @@ CREATE TABLE IF NOT EXISTS wh_events (
 CREATE INDEX IF NOT EXISTS ix_wh_events_box ON wh_events (box_id, at DESC);
 CREATE INDEX IF NOT EXISTS ix_wh_events_product ON wh_events (product_id, at DESC);
 
--- Черга друку з телефона. Принтер стоїть у локальній мережі крамниці (за
+-- Черга завдань з телефона (друк і правки товару). Принтер стоїть у локальній мережі крамниці (за
 -- мостом на Windows-ПК), з хмари до нього шляху нема — тому Mini App кладе
 -- завдання сюди, а агент друку в BMS (на Mac) забирає їх і друкує локально.
 CREATE TABLE IF NOT EXISTS wh_print_jobs (
     id          BIGSERIAL PRIMARY KEY,
-    kind        TEXT NOT NULL,                     -- box_label | stickers
-    payload     JSONB NOT NULL,                    -- {code} | {product_ids:[..], copies, layout}
+    kind        TEXT NOT NULL,                     -- box_label | stickers | product_edit
+    payload     JSONB NOT NULL,                    -- {code} | {product_ids:[..], copies, layout} | {product_id, fields}
     status      TEXT NOT NULL DEFAULT 'queued',    -- queued | printing | done | failed | cancelled
     created_by  TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),

@@ -5,7 +5,7 @@
 // кнопки ≥ 60 px) — на складі дивляться мигцем і не в окулярах. «Сесія
 // коробки» — відсканував коробку раз, далі скануєш товари поспіль.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, ApiError, hasAuth, type Box, type Product, type ScanResult, type WhEvent, type WhoAmI } from './api';
+import { api, ApiError, hasAuth, type Box, type Condition, type Product, type ScanResult, type WhEvent, type WhoAmI } from './api';
 import { canScan, confirmDialog, haptic, scanMany, scanOnce } from './scanner';
 import { tg, isInTelegram } from '../telegram';
 import {
@@ -29,6 +29,7 @@ const CATEGORIES: { letter: string; label: string }[] = [
   { letter: 'T', label: 'Трекінг' }, { letter: 'V', label: 'Весна' }, { letter: 'O', label: 'Одяг' },
 ];
 
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const money = (v: number | null | undefined) => (v == null ? '' : `${Math.round(v).toLocaleString('uk-UA')} ₴`);
 const ago = (iso: string) => {
   const d = new Date(iso); const s = (Date.now() - d.getTime()) / 1000;
@@ -183,6 +184,40 @@ export function App() {
     finally { setBusy(false); }
   }, [toast]);
 
+  // Правка товару з телефона: кладемо в чергу → агент BMS застосовує її тим
+  // самим шляхом, що й картка (база + журнал + лок + «стара ціна») і оновлює
+  // дзеркало в хмарі → перечитуємо картку. Чекаємо до ~40 с, далі — «пізніше».
+  const editProduct = useCallback(async (p: Product, fields: { price?: number; current_condition_name?: string }) => {
+    setBusy(true);
+    try {
+      const [job, agent] = await Promise.all([api.editProduct(p.id, fields), api.printAgent().catch(() => null)]);
+      if (!agent || !agent.online) {
+        haptic.warn();
+        toast('warn', 'Правка в черзі — застосується, щойно BMS на компʼютері буде запущена.');
+        return;
+      }
+      for (let i = 0; i < 20; i++) {
+        await sleep(2000);
+        const j = await api.job(job.id).catch(() => null);
+        if (!j) continue;
+        if (j.status === 'done') {
+          const fresh = await api.product(p.id);
+          setStack(st => st.map(v => (v.name === 'product' && v.product.id === p.id ? { name: 'product', product: fresh } : v)));
+          haptic.ok();
+          toast('ok', `${p.number} — збережено в BMS`);
+          return;
+        }
+        if (j.status === 'failed' || j.status === 'cancelled') {
+          haptic.err();
+          toast('err', j.error || 'BMS не змогла застосувати правку');
+          return;
+        }
+      }
+      toast('warn', 'BMS ще не застосувала правку — оновіть картку трохи пізніше.');
+    } catch (e) { haptic.err(); toast('err', errText(e, 'Не вдалося зберегти')); }
+    finally { setBusy(false); }
+  }, [toast]);
+
   const refreshBox = useCallback(async (code: string) => {
     try { replace({ name: 'box', box: await api.box(code) }); } catch { /* ignore */ }
   }, [replace]);
@@ -233,6 +268,7 @@ export function App() {
           onPickBox={(qty) => push({ name: 'boxes', pickFor: { product: view.product, qty } })}
           onNewBox={(qty) => push({ name: 'newBox', pickFor: { product: view.product, qty } })}
           onPrintSticker={() => void printViaAgent(() => api.printStickers([view.product.id], 1), `Стікер ${view.product.number}`)}
+          onEdit={fields => editProduct(view.product, fields)}
           onUnpack={async (boxCode, qty) => {
             setBusy(true);
             try {
@@ -415,22 +451,25 @@ function Choose({ products, stale, onPick }: { products: Product[]; stale?: bool
 
 /* ───────────────────────────── Товар ─────────────────────────────────────── */
 
-function ProductScreen({ product: p, busy, onScanBox, onPickBox, onNewBox, onUnpack, onRefresh, onPrintSticker }: {
+function ProductScreen({ product: p, busy, onScanBox, onPickBox, onNewBox, onUnpack, onRefresh, onPrintSticker, onEdit }: {
   product: Product; busy: boolean;
   onScanBox: (qty: number) => void; onPickBox: (qty: number) => void; onNewBox: (qty: number) => void;
   onUnpack: (boxCode: string, qty?: number) => void; onRefresh: () => void; onPrintSticker: () => void;
+  onEdit: (fields: { price?: number; current_condition_name?: string }) => Promise<void>;
 }) {
   const sold = p.available_qty <= 0;
   const maxQty = Math.max(1, p.available_qty || p.quantity || 1);
   const [qty, setQty] = useState(1);
   const [sheet, setSheet] = useState(false);
-  useEffect(() => { setQty(1); setSheet(false); }, [p.id]);
+  const [edit, setEdit] = useState(false);
+  useEffect(() => { setQty(1); setSheet(false); setEdit(false); }, [p.id]);
   const inBox = p.locations.length > 0;
 
   return (
     <>
       <Header title="Товар" sub={[p.brand, p.type].filter(Boolean).join(' · ') || undefined}
         right={<>
+          <button className="wh-iconbtn" onClick={() => setEdit(true)} disabled={busy} title="Змінити ціну / стан"><IEdit size={22} /></button>
           <button className="wh-iconbtn" onClick={onPrintSticker} disabled={busy} title="Надрукувати стікер (аркуш 4 шт) на принтері у крамниці"><IPrinter size={22} /></button>
           <button className="wh-iconbtn" onClick={onRefresh} title="Оновити"><IRefresh size={22} /></button>
         </>} />
@@ -446,8 +485,12 @@ function ProductScreen({ product: p, busy, onScanBox, onPickBox, onNewBox, onUnp
           <div className="wh-attr">{[p.brand, p.model].filter(Boolean).join(' · ') || '—'}</div>
           <div className="wh-attr">{[p.type, p.color, p.season].filter(Boolean).join(' · ')}</div>
           <div className="wh-chips">
-            {p.condition && <span className="wh-chip">{p.condition}</span>}
-            {p.price != null && <span className="wh-chip">{money(p.price)}</span>}
+            <button className="wh-chip tap" onClick={() => setEdit(true)} disabled={busy}>{p.condition || 'стан —'}<IEdit size={16} /></button>
+            <button className="wh-chip tap" onClick={() => setEdit(true)} disabled={busy}>
+              {p.price != null ? money(p.price) : 'ціна —'}
+              {p.oldprice != null && p.oldprice > 0 && <s className="wh-old">{money(p.oldprice)}</s>}
+              <IEdit size={16} />
+            </button>
             {p.quantity > 1 && <span className="wh-chip">{p.available_qty} з {p.quantity} шт</span>}
             {sold && <span className="wh-chip err">ПРОДАНО</span>}
           </div>
@@ -501,7 +544,72 @@ function ProductScreen({ product: p, busy, onScanBox, onPickBox, onNewBox, onUnp
           <button className="wh-btn" onClick={() => { setSheet(false); onNewBox(qty); }}><IPlus size={26} /> Нова коробка</button>
         </Sheet>
       )}
+      {edit && (
+        <EditProductSheet product={p} busy={busy} onClose={() => setEdit(false)}
+          onSubmit={async (fields) => { setEdit(false); await onEdit(fields); }} />
+      )}
     </>
+  );
+}
+
+/* ───────────────────────────── Правка товару ─────────────────────────────── */
+
+// Ціна і стан — те, що реально правлять на складі. Усе інше — в BMS.
+// «Стара ціна»: BMS сама перенесе туди поточну, якщо ціну ЗНИЖУЮТЬ, а стара
+// порожня (той самий код, що й у картці) — тут лише підказка, що так буде.
+function EditProductSheet({ product: p, busy, onClose, onSubmit }: {
+  product: Product; busy: boolean; onClose: () => void;
+  onSubmit: (fields: { price?: number; current_condition_name?: string }) => Promise<void>;
+}) {
+  const [price, setPrice] = useState(p.price != null ? String(Math.round(p.price)) : '');
+  const [cond, setCond] = useState(p.condition || '');
+  const [conds, setConds] = useState<Condition[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.conditions().then(r => { if (alive) setConds(r.conditions); }).catch(() => { if (alive) setConds([]); });
+    return () => { alive = false; };
+  }, []);
+
+  const names = useMemo(() => {
+    const list = (conds || []).map(c => c.name);
+    if (p.condition && !list.includes(p.condition)) list.unshift(p.condition);
+    return list;
+  }, [conds, p.condition]);
+
+  const priceNum = price.trim() === '' ? null : Number(price.replace(',', '.').replace(/\s/g, ''));
+  const priceBad = priceNum != null && (Number.isNaN(priceNum) || priceNum < 0);
+  const priceChanged = priceNum != null && !priceBad && priceNum !== (p.price == null ? null : Number(p.price));
+  const condChanged = !!cond && cond !== (p.condition || '');
+  const willMarkdown = priceChanged && p.price != null && priceNum! < Number(p.price) && !(p.oldprice && p.oldprice > 0);
+  const canSave = !busy && !priceBad && (priceChanged || condChanged);
+
+  const fields: { price?: number; current_condition_name?: string } = {};
+  if (priceChanged) fields.price = priceNum!;
+  if (condChanged) fields.current_condition_name = cond;
+
+  return (
+    <Sheet title={`${p.number} — змінити`} onClose={onClose}>
+      <div className="wh-label">Ціна, ₴</div>
+      <input className="wh-input price" value={price} inputMode="decimal" autoComplete="off"
+        onChange={e => setPrice(e.target.value)} placeholder={p.price != null ? String(Math.round(p.price)) : '0'} />
+      {willMarkdown && <div className="wh-hint">Стара ціна стане <b>{money(p.price)}</b> — BMS запише її автоматично.</div>}
+      {!willMarkdown && p.oldprice != null && p.oldprice > 0 && <div className="wh-hint">Стара ціна: {money(p.oldprice)} (не змінюється)</div>}
+      {priceBad && <div className="wh-hint" style={{ color: '#b42318' }}>Ціна має бути числом ≥ 0</div>}
+
+      <div className="wh-label" style={{ marginTop: 6 }}>Стан</div>
+      {conds === null ? <div className="wh-muted">Завантажую…</div> : (
+        <div className="wh-seg cond">
+          {names.map(n => (
+            <button key={n} className={cond === n ? 'on' : ''} onClick={() => setCond(n)}>{n}</button>
+          ))}
+        </div>
+      )}
+
+      <button className="wh-btn primary huge" disabled={!canSave} onClick={() => void onSubmit(fields)} style={{ marginTop: 8 }}>
+        <ICheck size={28} /> Зберегти в BMS
+      </button>
+      <div className="wh-hint">Правку застосує BMS на компʼютері (база, журнал, каталог) за кілька секунд.</div>
+    </Sheet>
   );
 }
 

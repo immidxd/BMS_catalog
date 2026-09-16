@@ -266,7 +266,7 @@ def _event(db: Session, actor: str, kind: str, *, box: Optional[Dict[str, Any]] 
 
 
 _PRODUCT_SQL = """
-    SELECT p.id, p.productnumber, p.model, p.price, p.quantity, p.sizeeu, p.size_letter,
+    SELECT p.id, p.productnumber, p.model, p.price, p.oldprice, p.quantity, p.sizeeu, p.size_letter,
            p.sizeua, p.measurementscm, p.season, p.official_photos_from,
            b.brandname AS brand, t.typename AS type, c.colorname AS color,
            g.gendername AS gender, cond.conditionname AS condition,
@@ -300,6 +300,7 @@ def _product_dict(r: Dict[str, Any]) -> Dict[str, Any]:
         "color": r.get("color"), "gender": r.get("gender"), "season": r.get("season"),
         "condition": r.get("condition"),
         "price": r.get("price"),
+        "oldprice": r.get("oldprice"),
         "quantity": int(r.get("quantity") or 0),
         "sold_count": int(r.get("sold_count") or 0),
         "available_qty": int(r.get("available_qty") or 0),
@@ -641,14 +642,61 @@ def box_delete(code: str, force: bool = False, db: Session = Depends(get_db),
     return {"deleted": box["code"], "unpacked_items": int(n_open)}
 
 
-# ───────────────────────────── черга друку (телефон → BMS) ───────────────────
+@router.get("/conditions")
+def conditions(db: Session = Depends(get_db), _: str = Depends(require_staff)):
+    """Стани товару для редагування з телефона (живі значення, без сміття)."""
+    rows = db.execute(text("""
+        SELECT c.id, c.conditionname AS name, COUNT(p.id) AS n
+        FROM conditions c LEFT JOIN products p ON p.current_conditionid = c.id
+        GROUP BY c.id, c.conditionname HAVING COUNT(p.id) >= 5 ORDER BY c.id
+    """)).mappings().all()
+    return {"conditions": [dict(r) for r in rows]}
+
+
+class MirrorRow(BaseModel):
+    id: int
+    price: Optional[float] = None
+    oldprice: Optional[float] = None
+    current_conditionid: Optional[int] = None
+
+
+class MirrorPatch(BaseModel):
+    rows: List[MirrorRow]
+
+
+@router.post("/products/mirror")
+def products_mirror(payload: MirrorPatch = Body(...), db: Session = Depends(get_db),
+                    actor: str = Depends(require_staff)):
+    """BMS після застосування правки оновлює дзеркало products у хмарі, щоб
+    телефон бачив свіже, не чекаючи годинного синхрону. Пакетно: правка ціни в
+    BMS розходиться на всю ростовку (рядки того ж номера й стану), тому агент
+    шле кожен змінений рядок. Лише з адмін-токеном."""
+    if actor != "bms":
+        raise HTTPException(status_code=403, detail="Лише BMS")
+    n = 0
+    for row in payload.rows:
+        db.execute(text("""UPDATE products
+                           SET price = :price, oldprice = :oldprice, current_conditionid = :cond
+                           WHERE id = :id"""),
+                   {"id": int(row.id), "price": row.price, "oldprice": row.oldprice, "cond": row.current_conditionid})
+        n += 1
+    db.commit()
+    return {"ok": True, "updated": n}
+
+
+# ───────────────────────────── черга (телефон → агент BMS) ───────────────────
 
 class PrintJobIn(BaseModel):
-    kind: str = Field(..., pattern="^(box_label|stickers)$")
+    """Завдання для агента BMS у крамниці. Черга спільна: друк (box_label,
+    stickers) і правки товару (product_edit) — агент застосовує їх канонічним
+    шляхом BMS (база + журнал + блокування поля від парсера)."""
+    kind: str = Field(..., pattern="^(box_label|stickers|product_edit)$")
     code: Optional[str] = None                  # box_label
     product_ids: Optional[List[int]] = None     # stickers
     copies: int = Field(1, ge=1, le=20)
     layout: str = "2x2"
+    product_id: Optional[int] = None            # product_edit
+    fields: Optional[Dict[str, Any]] = None     # product_edit: {price, current_conditionid, ...}
 
 
 class PrintJobDone(BaseModel):
@@ -670,6 +718,30 @@ def print_job_create(payload: PrintJobIn = Body(...), db: Session = Depends(get_
         if not _box_row(db, code):
             raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
         data = {"code": code, "copies": payload.copies}
+    elif payload.kind == "product_edit":
+        # Стан — НАЗВОЮ (як у картці BMS: current_condition_name → резолв у id
+        # робить сам product_service). Ціна — число ≥ 0. Решту полів ігноруємо.
+        raw = payload.fields or {}
+        fields: Dict[str, Any] = {}
+        if raw.get("price") is not None and str(raw.get("price")).strip() != "":
+            try:
+                fields["price"] = float(raw["price"])
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Ціна має бути числом")
+            if fields["price"] < 0:
+                raise HTTPException(status_code=400, detail="Ціна не може бути відʼємною")
+        cond = str(raw.get("current_condition_name") or raw.get("condition") or "").strip()
+        if cond:
+            ok = db.execute(text("SELECT conditionname FROM conditions WHERE lower(conditionname) = lower(:n) LIMIT 1"),
+                            {"n": cond}).scalar()
+            if not ok:
+                raise HTTPException(status_code=400, detail=f"Невідомий стан «{cond}»")
+            fields["current_condition_name"] = ok
+        if not payload.product_id or not fields:
+            raise HTTPException(status_code=400, detail="Нема що змінювати")
+        if not _load_product(db, payload.product_id):
+            raise HTTPException(status_code=404, detail="Товар не знайдено")
+        data = {"product_id": int(payload.product_id), "fields": fields}
     else:
         ids = [int(i) for i in (payload.product_ids or []) if i]
         if not ids:
@@ -692,6 +764,16 @@ def print_jobs(status: str = Query("queued"), limit: int = Query(20, ge=1, le=10
         "SELECT * FROM wh_print_jobs WHERE status = :st ORDER BY created_at LIMIT :lim"
     ), {"st": status, "lim": limit}).mappings().all()
     return {"jobs": [_job_dict(dict(r)) for r in rows]}
+
+
+@router.get("/print-jobs/{job_id}")
+def print_job_get(job_id: int, db: Session = Depends(get_db), _: str = Depends(require_staff)):
+    """Стан одного завдання — телефон чекає, поки агент застосує правку."""
+    r = db.execute(text("SELECT id, kind, status, error, agent, created_at, finished_at FROM wh_print_jobs WHERE id = :id"),
+                   {"id": job_id}).mappings().first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Завдання не знайдено")
+    return dict(r)
 
 
 @router.post("/print-jobs/{job_id}/claim")

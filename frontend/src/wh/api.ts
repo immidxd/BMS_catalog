@@ -12,7 +12,7 @@ export type Product = {
   id: number; productnumber: string; number: string; size: string; insole: string;
   brand: string | null; model: string | null; type: string | null; color: string | null;
   gender: string | null; season: string | null; condition: string | null;
-  price: number | null; quantity: number; sold_count: number; available_qty: number;
+  price: number | null; oldprice: number | null; quantity: number; sold_count: number; available_qty: number;
   image: string | null; locations: Location[]; missing?: boolean;
 };
 
@@ -94,7 +94,8 @@ export type WhoAmI = {
   problems: string[];
 };
 
-export type PrintJob = { id: number; kind: 'box_label' | 'stickers'; status: string; agent_seen_at?: string | null };
+export type PrintJob = { id: number; kind: 'box_label' | 'stickers' | 'product_edit'; status: string; error?: string | null; agent_seen_at?: string | null };
+export type Condition = { id: number; name: string; n: number };
 export type PrintAgent = { online: boolean; agent: string | null; last_seen: string | null; printer: string | null; queued: number };
 
 export const api = {
@@ -104,6 +105,12 @@ export const api = {
     req<PrintJob>('POST', '/api/wh/print-jobs', { kind: 'box_label', code, copies }),
   printStickers: (product_ids: number[], copies = 1, layout = '2x2') =>
     req<PrintJob>('POST', '/api/wh/print-jobs', { kind: 'stickers', product_ids, copies, layout }),
+  job: (id: number) => req<PrintJob>('GET', `/api/wh/print-jobs/${id}`),
+  conditions: () => req<{ conditions: Condition[] }>('GET', '/api/wh/conditions'),
+  // Правка товару — через ту саму чергу: агент BMS застосовує її канонічним
+  // шляхом (база + журнал + лок від парсера + «стара ціна») і оновлює дзеркало.
+  editProduct: (product_id: number, fields: { price?: number; current_condition_name?: string }) =>
+    req<PrintJob>('POST', '/api/wh/print-jobs', { kind: 'product_edit', product_id, fields }),
   scan: (code: string) => req<ScanResult>('GET', `/api/wh/scan?${q({ code })}`),
   search: (text: string) => req<{ products: Product[] }>('GET', `/api/wh/search?${q({ q: text })}`),
   product: (id: number) => req<Product>('GET', `/api/wh/products/${id}`),
