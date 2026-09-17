@@ -100,8 +100,6 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; border: 0; b
 /* Чіпи */
 .wh-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .wh-chip { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: var(--radius-full); background: var(--surface); border: 1.5px solid var(--border); font-size: 16px; font-weight: 700; color: var(--fg-muted); white-space: nowrap; }
-.wh-quick { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 16px; }
-.wh-quick .wh-btn { justify-content: flex-start; padding: 0 18px; }
 .wh-noaccess { display: flex; flex-direction: column; gap: 12px; padding: 18px 16px; }
 .wh-noaccess-title { font-size: 26px; font-weight: 900; letter-spacing: -.01em; }
 .wh-noaccess-sub { font-size: 16px; font-weight: 600; color: var(--fg-muted); }
