@@ -87,3 +87,19 @@ CREATE TABLE IF NOT EXISTS wh_agents (
     seen_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     printer  TEXT
 );
+
+-- Працівники складу (доступ до Mini App). Власники — з WAREHOUSE_TG_IDS (env),
+-- решта — тут: працівник відкриває бота → «Попросити доступ» → рядок pending →
+-- у BMS («Склад → Працівники») власник тисне «Дозволити». Без Railway і без
+-- копіювання Telegram id руками.
+CREATE TABLE IF NOT EXISTS wh_staff (
+    tg_id        BIGINT PRIMARY KEY,
+    name         TEXT,
+    username     TEXT,
+    status       TEXT NOT NULL DEFAULT 'pending',   -- pending | active | blocked
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    approved_at  TIMESTAMPTZ,
+    approved_by  TEXT,
+    last_seen_at TIMESTAMPTZ,
+    note         TEXT
+);

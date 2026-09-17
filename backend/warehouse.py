@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from auth import _admin_ids, _admin_token, _bot_token, telegram_profile_from_init_data
 from catalog import _SOLD_JOIN
-from database import get_db
+from database import SessionLocal, get_db
 from images import main_image_url
 
 router = APIRouter(prefix="/api/wh", tags=["warehouse"])
@@ -57,10 +57,40 @@ def _wh_bot_token() -> str:
     return (os.getenv("WAREHOUSE_BOT_TOKEN") or "").strip() or _bot_token()
 
 
-def _staff_ids() -> set[int]:
+def _owner_ids() -> set[int]:
+    """Власники — з налаштувань сервера (WAREHOUSE_TG_IDS, інакше ADMIN_TG_IDS)."""
     raw = (os.getenv("WAREHOUSE_TG_IDS") or "").replace(" ", "")
     ids = {int(x) for x in raw.split(",") if x.isdigit()}
     return ids or _admin_ids()
+
+
+_staff_cache: Dict[str, Any] = {"at": 0.0, "ids": set()}
+
+
+def _db_staff_ids() -> set[int]:
+    """Активні працівники з wh_staff (кеш 15 с — не ходити в базу на кожен запит)."""
+    import time as _time
+    now = _time.time()
+    if now - _staff_cache["at"] < 15:
+        return _staff_cache["ids"]
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("SELECT tg_id FROM wh_staff WHERE status = 'active'")).fetchall()
+        ids = {int(r[0]) for r in rows}
+    except Exception:  # noqa: BLE001 — таблиці ще нема / база моргнула
+        ids = _staff_cache["ids"]
+    finally:
+        db.close()
+    _staff_cache.update(at=now, ids=ids)
+    return ids
+
+
+def _staff_cache_reset() -> None:
+    _staff_cache["at"] = 0.0
+
+
+def _staff_ids() -> set[int]:
+    return _owner_ids() | _db_staff_ids()
 
 
 def require_staff(
@@ -114,6 +144,21 @@ def whoami(x_telegram_init_data: Optional[str] = Header(None),
     sig_wh = bool(x_telegram_init_data and telegram_profile_from_init_data(x_telegram_init_data, token=_wh_bot_token()))
     sig_shop = bool(x_telegram_init_data and _bot_token() and telegram_profile_from_init_data(x_telegram_init_data, token=_bot_token()))
     in_staff = uid is not None and uid in _staff_ids()
+    staff_status: Optional[str] = None
+    if uid is not None:
+        if uid in _owner_ids():
+            staff_status = "owner"
+        else:
+            db = SessionLocal()
+            try:
+                staff_status = db.execute(text("SELECT status FROM wh_staff WHERE tg_id = :i"), {"i": uid}).scalar()
+                if staff_status == "active":
+                    db.execute(text("UPDATE wh_staff SET last_seen_at = now() WHERE tg_id = :i"), {"i": uid})
+                    db.commit()
+            except Exception:  # noqa: BLE001
+                staff_status = None
+            finally:
+                db.close()
     problems: List[str] = []
     if wh_token_set and token_shape["has_quotes"]:
         problems.append("WAREHOUSE_BOT_TOKEN вставлено з лапками — приберіть їх.")
@@ -136,9 +181,8 @@ def whoami(x_telegram_init_data: Optional[str] = Header(None),
                                else "не задано WAREHOUSE_BOT_TOKEN (токен бота, через якого відкрито застосунок)."))
         elif not sig_wh and sig_shop:
             problems.append("Відкрито через бота вітрини, а не бота складу.")
-        if uid is not None and not in_staff:
-            problems.append(f"Ваш Telegram id {uid} не в списку працівників "
-                            + ("WAREHOUSE_TG_IDS." if staff_set else "— WAREHOUSE_TG_IDS не задано, діє ADMIN_TG_IDS."))
+        if uid is not None and not in_staff and staff_status not in ("pending", "blocked"):
+            problems.append(f"Ваш Telegram id {uid} не в списку працівників.")
     # Адмін-токен (BMS / розробка в браузері) — теж повний доступ.
     tok = _admin_token()
     bearer_ok = False
@@ -150,6 +194,7 @@ def whoami(x_telegram_init_data: Optional[str] = Header(None),
     return {"user_id": uid, "name": name or ("BMS" if bearer_ok else ""),
             "access": bool(bearer_ok or (sig_wh and in_staff)),
             "signature_warehouse_bot": sig_wh, "signature_shop_bot": sig_shop, "in_staff": in_staff,
+            "staff_status": staff_status,
             "server": {"warehouse_bot_token_set": wh_token_set, "staff_ids_set": staff_set,
                        "token_shape": token_shape,
                        "warehouse_bot": ({"username": bot_info.get("username"), "id": bot_info.get("id")}
@@ -683,6 +728,103 @@ def products_mirror(payload: MirrorPatch = Body(...), db: Session = Depends(get_
         n += 1
     db.commit()
     return {"ok": True, "updated": n}
+
+
+# ───────────────────────────── працівники ────────────────────────────────────
+
+def _staff_row_dict(r: Dict[str, Any]) -> Dict[str, Any]:
+    return {"tg_id": int(r["tg_id"]), "name": r.get("name") or "", "username": r.get("username") or "",
+            "status": r["status"], "requested_at": r.get("requested_at"), "approved_at": r.get("approved_at"),
+            "approved_by": r.get("approved_by"), "last_seen_at": r.get("last_seen_at"), "note": r.get("note")}
+
+
+@router.post("/access-request")
+def access_request(x_telegram_init_data: Optional[str] = Header(None), db: Session = Depends(get_db)):
+    """Працівник просить доступ: підпис initData бота складу обовʼязковий (щоб
+    не можна було підкинути чужий id), далі — рядок pending у wh_staff.
+    Власник підтверджує в BMS. Повторний запит не скидає active/blocked."""
+    if not x_telegram_init_data:
+        raise HTTPException(status_code=400, detail="Відкрийте застосунок із Telegram")
+    prof = telegram_profile_from_init_data(x_telegram_init_data, token=_wh_bot_token())
+    if not prof:
+        raise HTTPException(status_code=401, detail="Підпис Telegram не збігається з ботом складу")
+    uid = int(prof["id"])
+    if uid in _owner_ids():
+        return {"status": "owner"}
+    r = db.execute(text("""
+        INSERT INTO wh_staff (tg_id, name, username, status)
+        VALUES (:id, :name, :username, 'pending')
+        ON CONFLICT (tg_id) DO UPDATE SET name = EXCLUDED.name, username = EXCLUDED.username,
+            requested_at = CASE WHEN wh_staff.status = 'pending' THEN wh_staff.requested_at ELSE now() END
+        RETURNING status
+    """), {"id": uid, "name": (prof.get("name") or "")[:120], "username": (prof.get("username") or "")[:64]}).scalar()
+    db.commit()
+    return {"status": r}
+
+
+@router.get("/staff")
+def staff_list(db: Session = Depends(get_db), actor: str = Depends(require_staff)):
+    """Список для BMS: власники (з налаштувань) + працівники з бази."""
+    if actor != "bms":
+        raise HTTPException(status_code=403, detail="Лише BMS")
+    rows = db.execute(text("SELECT * FROM wh_staff ORDER BY (status = 'pending') DESC, requested_at DESC")).mappings().all()
+    return {"owners": sorted(_owner_ids()), "staff": [_staff_row_dict(dict(r)) for r in rows],
+            "pending": sum(1 for r in rows if r["status"] == "pending")}
+
+
+class StaffIn(BaseModel):
+    tg_id: int = Field(..., ge=1)
+    name: Optional[str] = None
+    note: Optional[str] = None
+
+
+@router.post("/staff", status_code=201)
+def staff_add(payload: StaffIn = Body(...), db: Session = Depends(get_db), actor: str = Depends(require_staff)):
+    """Додати працівника вручну за Telegram id (одразу active)."""
+    if actor != "bms":
+        raise HTTPException(status_code=403, detail="Лише BMS")
+    r = db.execute(text("""
+        INSERT INTO wh_staff (tg_id, name, status, approved_at, approved_by, note)
+        VALUES (:id, :name, 'active', now(), :by, :note)
+        ON CONFLICT (tg_id) DO UPDATE SET status = 'active', approved_at = now(), approved_by = EXCLUDED.approved_by,
+            name = COALESCE(NULLIF(EXCLUDED.name, ''), wh_staff.name), note = COALESCE(EXCLUDED.note, wh_staff.note)
+        RETURNING *
+    """), {"id": int(payload.tg_id), "name": (payload.name or "")[:120], "by": actor, "note": payload.note}).mappings().first()
+    db.commit()
+    _staff_cache_reset()
+    return _staff_row_dict(dict(r))
+
+
+class StaffStatusIn(BaseModel):
+    status: str = Field(..., pattern="^(active|blocked)$")
+
+
+@router.post("/staff/{tg_id}/status")
+def staff_set_status(tg_id: int, payload: StaffStatusIn = Body(...), db: Session = Depends(get_db),
+                     actor: str = Depends(require_staff)):
+    if actor != "bms":
+        raise HTTPException(status_code=403, detail="Лише BMS")
+    r = db.execute(text("""
+        UPDATE wh_staff SET status = :st,
+            approved_at = CASE WHEN :st = 'active' THEN now() ELSE approved_at END,
+            approved_by = CASE WHEN :st = 'active' THEN :by ELSE approved_by END
+        WHERE tg_id = :id RETURNING *
+    """), {"st": payload.status, "by": actor, "id": int(tg_id)}).mappings().first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Працівника не знайдено")
+    db.commit()
+    _staff_cache_reset()
+    return _staff_row_dict(dict(r))
+
+
+@router.delete("/staff/{tg_id}")
+def staff_delete(tg_id: int, db: Session = Depends(get_db), actor: str = Depends(require_staff)):
+    if actor != "bms":
+        raise HTTPException(status_code=403, detail="Лише BMS")
+    db.execute(text("DELETE FROM wh_staff WHERE tg_id = :id"), {"id": int(tg_id)})
+    db.commit()
+    _staff_cache_reset()
+    return {"ok": True}
 
 
 # ───────────────────────────── черга (телефон → агент BMS) ───────────────────

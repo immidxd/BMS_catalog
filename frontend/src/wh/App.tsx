@@ -90,6 +90,57 @@ function Sheet({ title, onClose, children }: { title: string; onClose: () => voi
   );
 }
 
+/* ───────────────────────────── Немає доступу ─────────────────────────────── */
+
+// Новий працівник: підпис бота складу є, але його ще не пустили → одна велика
+// кнопка «Попросити доступ»; власник підтверджує в BMS («Склад → Працівники»).
+// Діагностику (токени, підписи) показуємо лише коли проблема на сервері.
+function NoAccess({ who, onChanged }: { who: WhoAmI | null; onChanged: () => void }) {
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const canAsk = !!who && who.signature_warehouse_bot && !who.access && who.staff_status !== 'blocked';
+  const pending = who?.staff_status === 'pending' || sent;
+  const blocked = who?.staff_status === 'blocked';
+  const ask = async () => {
+    setSending(true);
+    try { const r = await api.requestAccess(); setSent(true); haptic.ok(); if (r.status === 'active' || r.status === 'owner') onChanged(); }
+    catch { haptic.err(); }
+    finally { setSending(false); }
+  };
+  if (canAsk) {
+    return (
+      <div className="wh-card wh-noaccess">
+        <div className="wh-noaccess-title">{pending ? 'Запит надіслано' : 'Потрібен доступ'}</div>
+        <div className="wh-noaccess-sub">
+          {who?.name ? `${who.name} · ` : ''}Telegram id {who?.user_id}
+        </div>
+        {pending ? (
+          <>
+            <div className="wh-hint">Чекаємо, поки власник підтвердить у BMS («Склад → Працівники»). Потім натисніть «Перевірити».</div>
+            <button className="wh-btn primary huge" onClick={onChanged}><IRefresh size={26} /> Перевірити</button>
+          </>
+        ) : (
+          <>
+            <div className="wh-hint">Натисніть — і власник побачить ваш запит у BMS та підтвердить його.</div>
+            <button className="wh-btn primary huge" disabled={sending} onClick={() => void ask()}><ICheck size={26} /> Попросити доступ</button>
+          </>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="wh-banner err">
+      <IAlert size={24} />
+      <div>
+        {blocked ? 'Доступ заблоковано.' : 'Немає доступу до складу.'}
+        {who?.user_id ? <div className="sub">Ваш Telegram id: {who.user_id}{who.name ? ` (${who.name})` : ''}</div> : null}
+        {(who?.problems || []).map((p, i) => <div key={i} className="sub">• {p}</div>)}
+        {!hasAuth() && <div className="sub">Відкрийте застосунок із Telegram через бота «BMS Склад».</div>}
+      </div>
+    </div>
+  );
+}
+
 /* ───────────────────────────── Застосунок ────────────────────────────────── */
 
 export function App() {
@@ -343,17 +394,7 @@ function Home({ busy, who, onScan, onSearch, onBoxes, onOpenBox, onNewBox }: {
       <Header title="Склад" sub={who?.name ? `Привіт, ${who.name.split(' ')[0]}` : 'BMS'}
         right={<button className="wh-iconbtn" onClick={load} title="Оновити"><IRefresh size={22} /></button>} />
       <div className="wh-body no-bar">
-        {noAccess && (
-          <div className="wh-banner err">
-            <IAlert size={24} />
-            <div>
-              Немає доступу до складу.
-              {who?.user_id ? <div className="sub">Ваш Telegram id: {who.user_id}{who.name ? ` (${who.name})` : ''}</div> : null}
-              {(who?.problems || []).map((p, i) => <div key={i} className="sub">• {p}</div>)}
-              {!hasAuth() && <div className="sub">Відкрийте застосунок із Telegram через бота «BMS Склад».</div>}
-            </div>
-          </div>
-        )}
+        {noAccess && <NoAccess who={who} onChanged={load} />}
 
         <button className="wh-hero" onClick={onScan} disabled={busy}>
           <span className="wh-hero-ico"><IScan size={36} /></span>

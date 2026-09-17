@@ -90,6 +90,7 @@ const q = (o: Record<string, string | number | undefined>) =>
 export type WhoAmI = {
   user_id: number | null; name: string; access: boolean;
   signature_warehouse_bot: boolean; signature_shop_bot: boolean; in_staff: boolean;
+  staff_status: 'owner' | 'pending' | 'active' | 'blocked' | null;
   server: { warehouse_bot_token_set: boolean; staff_ids_set: boolean };
   problems: string[];
 };
@@ -100,6 +101,7 @@ export type PrintAgent = { online: boolean; agent: string | null; last_seen: str
 
 export const api = {
   whoami: () => req<WhoAmI>('GET', '/api/wh/whoami'),
+  requestAccess: () => req<{ status: string }>('POST', '/api/wh/access-request'),
   printAgent: () => req<PrintAgent>('GET', '/api/wh/print-agent/status'),
   printBoxLabel: (code: string, copies = 1) =>
     req<PrintJob>('POST', '/api/wh/print-jobs', { kind: 'box_label', code, copies }),
