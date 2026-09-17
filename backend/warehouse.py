@@ -451,6 +451,7 @@ class BoxCreate(BaseModel):
     location: Optional[str] = None
     note: Optional[str] = None
     needs_check: bool = False
+    op_id: Optional[str] = None           # ідемпотентність (офлайн-черга телефона)
 
 
 class BoxPatch(BaseModel):
@@ -459,17 +460,59 @@ class BoxPatch(BaseModel):
     note: Optional[str] = None
     category: Optional[str] = None
     needs_check: Optional[bool] = None
+    op_id: Optional[str] = None
 
 
 class PackIn(BaseModel):
     product_id: int
     qty: int = Field(1, ge=1, le=99)
     move: bool = False                    # уже лежить в іншій коробці → перенести
+    op_id: Optional[str] = None
 
 
 class UnpackIn(BaseModel):
     product_id: int
     qty: Optional[int] = Field(None, ge=1, le=99)   # None → усе, що лежить
+    op_id: Optional[str] = None
+
+
+# ───────────────────────────── ідемпотентність ───────────────────────────────
+# Дія з телефона може дійти двічі (обрив після коміту, повтор із офлайн-черги).
+# Клієнт дає op_id; ми займаємо його ДО дії, а результат кладемо в тій самій
+# транзакції — повтор отримує збережену відповідь і нічого не змінює.
+
+class _Replay(Exception):
+    def __init__(self, result: Any): self.result = result
+
+
+def _claim_op(db: Session, op_id: Optional[str], kind: str, actor: str) -> None:
+    """Зайняти op_id. Уже є з результатом → _Replay(результат); є без
+    результату (виконується паралельно) → 409 «повторіть»."""
+    if not op_id:
+        return
+    r = db.execute(text("""
+        INSERT INTO wh_client_ops (op_id, kind, actor) VALUES (:id, :kind, :actor)
+        ON CONFLICT (op_id) DO NOTHING RETURNING op_id
+    """), {"id": op_id[:128], "kind": kind, "actor": actor}).first()
+    if r:
+        return
+    row = db.execute(text("SELECT result, created_at < now() - interval '2 minutes' AS stale FROM wh_client_ops WHERE op_id = :id"),
+                     {"id": op_id[:128]}).mappings().first()
+    if row and row["result"] is not None:
+        raise _Replay(row["result"])
+    if row and row["stale"]:
+        # Зайнято, але результату так і не зʼявилось (процес упав між діями) —
+        # перебираємо на себе, інакше op_id лишився б «у польоті» назавжди.
+        db.execute(text("UPDATE wh_client_ops SET created_at = now(), actor = :actor WHERE op_id = :id"),
+                   {"id": op_id[:128], "actor": actor})
+        return
+    raise HTTPException(status_code=409, detail={"code": "in_flight", "message": "Ця дія ще виконується — повторіть за мить"})
+
+
+def _finish_op(db: Session, op_id: Optional[str], result: Any) -> None:
+    if op_id:
+        db.execute(text("UPDATE wh_client_ops SET result = CAST(:r AS jsonb) WHERE op_id = :id"),
+                   {"id": op_id[:128], "r": json.dumps(result, ensure_ascii=False, default=str)})
 
 
 # ───────────────────────────── читання ───────────────────────────────────────
@@ -598,6 +641,11 @@ def events(box: Optional[str] = None, product_id: Optional[int] = None,
 @router.post("/boxes", status_code=201)
 def box_create(payload: BoxCreate = Body(...), db: Session = Depends(get_db),
                actor: str = Depends(require_staff)):
+    try:
+        _claim_op(db, payload.op_id, "box_create", actor)
+    except _Replay as rp:
+        db.rollback()
+        return rp.result
     code = normalize_box_code(payload.code) if payload.code else next_box_code(db, payload.category or "")
     category = (payload.category or re.match(r"^[A-ZА-ЯІЇЄҐ]+", code).group(0)).upper()
     if _box_row(db, code):
@@ -610,7 +658,11 @@ def box_create(payload: BoxCreate = Body(...), db: Session = Depends(get_db),
     box = dict(r)
     _event(db, actor, "box_create", box=box, details={"title": payload.title})
     db.commit()
-    return box_detail(code, db, actor)
+    result = box_detail(code, db, actor)
+    if payload.op_id:
+        _finish_op(db, payload.op_id, result)
+        db.commit()
+    return result
 
 
 @router.patch("/boxes/{code}")
@@ -619,19 +671,34 @@ def box_patch(code: str, payload: BoxPatch = Body(...), db: Session = Depends(ge
     box = _box_row(db, code, for_update=True)
     if not box:
         raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
-    changes = {k: v for k, v in payload.dict().items() if v is not None}
+    changes = {k: v for k, v in payload.dict().items() if v is not None and k != "op_id"}
     if not changes:
         return box_detail(code, db, actor)
+    try:
+        _claim_op(db, payload.op_id, "box_edit", actor)
+    except _Replay as rp:
+        db.rollback()
+        return rp.result
     sets = ", ".join(f"{k} = :{k}" for k in changes)
     db.execute(text(f"UPDATE wh_boxes SET {sets}, updated_at = now() WHERE id = :id"),
                {**changes, "id": box["id"]})
     _event(db, actor, "box_edit", box=box, details=changes)
     db.commit()
-    return box_detail(code, db, actor)
+    result = box_detail(code, db, actor)
+    if payload.op_id:
+        _finish_op(db, payload.op_id, result)
+        db.commit()
+    return result
 
 
 @router.post("/boxes/{code}/seal")
-def box_seal(code: str, db: Session = Depends(get_db), actor: str = Depends(require_staff)):
+def box_seal(code: str, op_id: Optional[str] = Query(None), db: Session = Depends(get_db),
+             actor: str = Depends(require_staff)):
+    try:
+        _claim_op(db, op_id, "seal", actor)
+    except _Replay as rp:
+        db.rollback()
+        return rp.result
     box = _box_row(db, code, for_update=True)
     if not box:
         raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
@@ -639,23 +706,43 @@ def box_seal(code: str, db: Session = Depends(get_db), actor: str = Depends(requ
                {"id": box["id"]})
     _event(db, actor, "seal", box=box)
     db.commit()
-    return box_detail(code, db, actor)
+    result = box_detail(code, db, actor)
+    if op_id:
+        _finish_op(db, op_id, result)
+        db.commit()
+    return result
 
 
 @router.post("/boxes/{code}/open")
-def box_open(code: str, db: Session = Depends(get_db), actor: str = Depends(require_staff)):
+def box_open(code: str, op_id: Optional[str] = Query(None), db: Session = Depends(get_db),
+             actor: str = Depends(require_staff)):
+    try:
+        _claim_op(db, op_id, "open", actor)
+    except _Replay as rp:
+        db.rollback()
+        return rp.result
     box = _box_row(db, code, for_update=True)
     if not box:
         raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
     db.execute(text("UPDATE wh_boxes SET status = 'open', updated_at = now() WHERE id = :id"), {"id": box["id"]})
     _event(db, actor, "open", box=box)
     db.commit()
-    return box_detail(code, db, actor)
+    result = box_detail(code, db, actor)
+    if op_id:
+        _finish_op(db, op_id, result)
+        db.commit()
+    return result
 
 
 @router.post("/boxes/{code}/check")
-def box_check(code: str, db: Session = Depends(get_db), actor: str = Depends(require_staff)):
+def box_check(code: str, op_id: Optional[str] = Query(None), db: Session = Depends(get_db),
+             actor: str = Depends(require_staff)):
     """Коробку звірено — знімаємо «Перевірити»."""
+    try:
+        _claim_op(db, op_id, "check", actor)
+    except _Replay as rp:
+        db.rollback()
+        return rp.result
     box = _box_row(db, code, for_update=True)
     if not box:
         raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
@@ -663,7 +750,11 @@ def box_check(code: str, db: Session = Depends(get_db), actor: str = Depends(req
                {"id": box["id"]})
     _event(db, actor, "check", box=box)
     db.commit()
-    return box_detail(code, db, actor)
+    result = box_detail(code, db, actor)
+    if op_id:
+        _finish_op(db, op_id, result)
+        db.commit()
+    return result
 
 
 @router.delete("/boxes/{code}")
@@ -991,6 +1082,11 @@ def pack(code: str, payload: PackIn = Body(...), db: Session = Depends(get_db),
          actor: str = Depends(require_staff)):
     """Покласти товар у коробку. Якщо він уже лежить в іншій — 409 з місцем
     (застосунок питає «перенести?»), або `move=true` → переносимо."""
+    try:
+        _claim_op(db, payload.op_id, "pack", actor)
+    except _Replay as rp:
+        db.rollback()
+        return rp.result
     box = _box_row(db, code, for_update=True)
     if not box:
         raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
@@ -1039,10 +1135,12 @@ def pack(code: str, payload: PackIn = Body(...), db: Session = Depends(get_db),
     if box["status"] == "sealed":
         # Клали в запечатану — значить її відкрили; чесно позначаємо.
         db.execute(text("UPDATE wh_boxes SET status = 'open', updated_at = now() WHERE id = :id"), {"id": box["id"]})
-    db.commit()
     prod["locations"] = _locations(db, [prod["id"]]).get(prod["id"], [])
-    return {"ok": True, "box": box["code"], "product": prod, "moved_from": moved_from,
-            "warning": ("Товар продано — стікер/пара мали б піти покупцю" if prod["available_qty"] <= 0 else None)}
+    result = {"ok": True, "box": box["code"], "product": prod, "moved_from": moved_from,
+              "warning": ("Товар продано — стікер/пара мали б піти покупцю" if prod["available_qty"] <= 0 else None)}
+    _finish_op(db, payload.op_id, result)
+    db.commit()
+    return result
 
 
 def _reopen_if_sealed(db: Session, box_ids: List[int]) -> None:
@@ -1079,6 +1177,11 @@ def _unpack_rows(db: Session, actor: str, product_id: int, box_id: Optional[int]
 @router.post("/boxes/{code}/unpack")
 def unpack_from_box(code: str, payload: UnpackIn = Body(...), db: Session = Depends(get_db),
                     actor: str = Depends(require_staff)):
+    try:
+        _claim_op(db, payload.op_id, "unpack", actor)
+    except _Replay as rp:
+        db.rollback()
+        return rp.result
     box = _box_row(db, code, for_update=True)
     if not box:
         raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
@@ -1089,14 +1192,21 @@ def unpack_from_box(code: str, payload: UnpackIn = Body(...), db: Session = Depe
     for d in done:
         _event(db, actor, "unpack", box=box, product=prod, qty=d["qty"])
     _reopen_if_sealed(db, [box["id"]])
+    result = {"ok": True, "unpacked": done}
+    _finish_op(db, payload.op_id, result)
     db.commit()
-    return {"ok": True, "unpacked": done}
+    return result
 
 
 @router.post("/unpack")
 def unpack_anywhere(payload: UnpackIn = Body(...), db: Session = Depends(get_db),
                     actor: str = Depends(require_staff)):
     """Вийняти товар, де б він не лежав (сканування товару → «Вийняти»)."""
+    try:
+        _claim_op(db, payload.op_id, "unpack", actor)
+    except _Replay as rp:
+        db.rollback()
+        return rp.result
     prod = _load_product(db, payload.product_id) or {"id": payload.product_id, "productnumber": None, "number": str(payload.product_id)}
     done = _unpack_rows(db, actor, payload.product_id, None, payload.qty)
     if not done:
@@ -1104,8 +1214,10 @@ def unpack_anywhere(payload: UnpackIn = Body(...), db: Session = Depends(get_db)
     for d in done:
         _event(db, actor, "unpack", box={"id": d["box_id"], "code": d["box_code"]}, product=prod, qty=d["qty"])
     _reopen_if_sealed(db, [d["box_id"] for d in done])
+    result = {"ok": True, "unpacked": done}
+    _finish_op(db, payload.op_id, result)
     db.commit()
-    return {"ok": True, "unpacked": done}
+    return result
 
 
 @router.post("/boxes/{code}/unpack-all")

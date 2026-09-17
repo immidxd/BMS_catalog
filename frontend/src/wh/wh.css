@@ -186,3 +186,12 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; border: 0; b
 
 .wh-empty { text-align: center; color: var(--fg-subtle); font-size: 17px; padding: 28px 16px; line-height: 1.4; }
 .wh-link { color: var(--fg-subtle); font-size: 16px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+
+/* Смужка стану мережі — над шапкою, поки є що сказати. */
+.wh-netbar { display: flex; align-items: center; justify-content: center; gap: 8px; padding: calc(8px + env(safe-area-inset-top, 0px)) 16px 8px; margin-bottom: calc(-1 * env(safe-area-inset-top, 0px)); font-size: 15px; font-weight: 700; background: var(--surface); color: var(--fg-muted); border: 0; width: 100%; font-family: inherit; }
+.wh-netbar svg { flex-shrink: 0; }
+.wh-netbar.warn { background: #fff4e0; color: #9a3d00; }
+.wh-netbar.err { background: #fdecec; color: #b3261e; cursor: pointer; }
+[data-theme="dark"] .wh-netbar.warn { background: #3a2a10; color: #fbbf24; }
+[data-theme="dark"] .wh-netbar.err { background: #3a1a1a; color: #fca5a5; }
+.wh-netbar + .wh-header { margin-top: 0; padding-top: 10px; }

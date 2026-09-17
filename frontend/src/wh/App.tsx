@@ -5,13 +5,17 @@
 // кнопки ≥ 60 px) — на складі дивляться мигцем і не в окулярах. «Сесія
 // коробки» — відсканував коробку раз, далі скануєш товари поспіль.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, ApiError, hasAuth, type Box, type Condition, type Product, type ScanResult, type WhEvent, type WhoAmI } from './api';
+import { api, ApiError, hasAuth, isNetworkError, type Box, type Condition, type Product, type ScanResult, type WhEvent, type WhoAmI } from './api';
+import { cached, discard, enqueue, noteOnline, onSynced, parseCodeOffline, remember, retry, runOrQueue, setOnline, useOffline, type Op } from './offline';
 import { canScan, confirmDialog, haptic, scanMany, scanOnce } from './scanner';
 import { tg, isInTelegram } from '../telegram';
 import {
   IAlert, IBox, IBoxes, ICheck, IChevron, IEdit, ILock, IMore, IMove, IPackIn, IPackOut,
   IPhoto, IPlus, IPrinter, IRefresh, IScan, ISearch, ITrash, IUnlock, IX,
 } from './icons';
+
+const OFFLINE_ONLY_ONLINE = 'Без мережі ця дія недоступна — спробуйте, коли зʼявиться звʼязок.';
+const QUEUED = 'Немає мережі — дію збережено, виконаю, щойно зʼявиться звʼязок.';
 
 type View =
   | { name: 'home' }
@@ -151,7 +155,10 @@ export function App() {
   const [who, setWho] = useState<WhoAmI | null>(null);
   const toastId = useRef(0);
 
-  useEffect(() => { api.whoami().then(setWho).catch(() => setWho(null)); }, []);
+  useEffect(() => { api.whoami().then(w => { setWho(w); noteOnline(); }).catch(() => setWho(null)); }, []);
+  const off = useOffline();
+  const [fixOpen, setFixOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const toast = useCallback((kind: Toast['kind'], text: string) => {
     const id = ++toastId.current;
@@ -174,49 +181,95 @@ export function App() {
   }, [stack.length, back]);
 
   const openScan = useCallback((r: ScanResult) => {
+    // Усе побачене — в копію: саме з неї застосунок живе без мережі.
+    if (r.kind === 'product') remember.product(r.product);
+    else if (r.kind === 'box') remember.box(r.box);
+    else remember.products(r.products);
     if (r.kind === 'product') push({ name: 'product', product: r.product });
     else if (r.kind === 'box') push({ name: 'box', box: r.box });
     else if (r.products.length === 1) push({ name: 'product', product: r.products[0] });
     else push({ name: 'choose', products: r.products, stale: r.stale_sticker });
   }, [push]);
 
+  // Скан без мережі: QR несе id і номер — цього досить, щоб відкрити картку з
+  // копії (або хоча б із номером) і покласти в коробку.
+  const scanResolve = useCallback(async (code: string): Promise<ScanResult> => {
+    try { const r = await api.scan(code); noteOnline(); return r; }
+    catch (e) {
+      if (!isNetworkError(e)) throw e;
+      setOnline(false);
+      const local = parseCodeOffline(code);
+      if (!local) throw e;
+      return local;
+    }
+  }, []);
+
   const doScan = useCallback(async () => {
     const code = await scanOnce();
     if (!code) return;
     setBusy(true);
-    try { openScan(await api.scan(code)); haptic.tap(); }
-    catch (e) { toast('err', errText(e, 'Не впізнав код')); }
+    try { openScan(await scanResolve(code)); haptic.tap(); }
+    catch (e) { toast('err', isNetworkError(e) ? 'Немає мережі, і цього коду ще нема в копії' : errText(e, 'Не впізнав код')); }
     finally { setBusy(false); }
-  }, [openScan, toast]);
+  }, [openScan, scanResolve, toast]);
 
   const doSearch = useCallback(async (text: string) => {
     if (!text.trim()) return;
     setBusy(true);
     try {
-      const r = await api.search(text);
-      if (r.products.length === 0) toast('warn', `«${text}» не знайдено`);
-      else openScan({ kind: 'products', products: r.products });
+      let products: Product[];
+      try { const r = await api.search(text); noteOnline(); products = r.products; }
+      catch (e) {
+        if (!isNetworkError(e)) throw e;
+        setOnline(false);
+        products = cached.byNumber(text);
+        if (products.length) toast('warn', 'Немає мережі — показую з копії');
+      }
+      if (products.length === 0) toast('warn', off.online ? `«${text}» не знайдено` : `«${text}» нема в копії, а мережі нема`);
+      else openScan({ kind: 'products', products });
     } catch (e) { toast('err', errText(e, 'Пошук не вдався')); }
     finally { setBusy(false); }
-  }, [openScan, toast]);
+  }, [openScan, toast, off.online]);
 
   const packInto = useCallback(async (box: Box | string, product: Product, qty: number): Promise<Product | null> => {
     const code = typeof box === 'string' ? box : box.code;
+    const queueIt = (move: boolean) => {
+      enqueue('pack', { code, product, qty, move }, `${product.number} → ${code}${move ? ' (перенести)' : ''}`);
+      toast('warn', QUEUED);
+      return cached.product(product.id) || product;
+    };
     try {
       const r = await api.pack(code, product.id, qty);
+      noteOnline();
+      remember.product(r.product);
       toast('ok', r.moved_from.length ? `${product.number} → ${code} (з ${r.moved_from.join(', ')})` : `${product.number} → ${code}`);
       if (r.warning) toast('warn', r.warning);
       return r.product;
     } catch (e) {
+      if (isNetworkError(e)) {
+        setOnline(false);
+        // Копія знає, де лежить товар: питаємо про перенесення, як і онлайн.
+        const elsewhere = (cached.product(product.id)?.locations || product.locations || []).filter(l => l.box_code !== code);
+        if (elsewhere.length) {
+          haptic.warn();
+          if (!(await confirmDialog(`${product.number} лежить у ${elsewhere.map(l => l.box_code).join(', ')} (за копією). Перенести в ${code}?`))) return null;
+          return queueIt(true);
+        }
+        return queueIt(false);
+      }
       if (e instanceof ApiError && e.status === 409 && (e.detail as any)?.code === 'elsewhere') {
         const d = e.detail as { message: string };
         haptic.warn();
         if (!(await confirmDialog(`${d.message}. Перенести в ${code}?`))) return null;
         try {
           const r = await api.pack(code, product.id, qty, true);
+          remember.product(r.product);
           toast('ok', `${product.number}: ${r.moved_from.join(', ')} → ${code}`);
           return r.product;
-        } catch (e2) { toast('err', errText(e2, 'Не вдалося перенести')); return null; }
+        } catch (e2) {
+          if (isNetworkError(e2)) { setOnline(false); return queueIt(true); }
+          toast('err', errText(e2, 'Не вдалося перенести')); return null;
+        }
       }
       toast('err', errText(e, 'Не вдалося запакувати'));
       return null;
@@ -233,7 +286,7 @@ export function App() {
       else if (agent && agent.online) { haptic.warn(); toast('warn', `${what} — у черзі. BMS працює, але принтер не відповідає: увімкніть Windows-ПК з принтером (міст, порт 9100).`); }
       else { haptic.warn(); toast('warn', `${what} — у черзі. Надрукується, щойно BMS на компʼютері буде запущена.`); }
       return job;
-    } catch (e) { toast('err', errText(e, 'Не вдалося поставити на друк')); return null; }
+    } catch (e) { toast('err', isNetworkError(e) ? OFFLINE_ONLY_ONLINE : errText(e, 'Не вдалося поставити на друк')); return null; }
     finally { setBusy(false); }
   }, [toast]);
 
@@ -268,21 +321,55 @@ export function App() {
         }
       }
       toast('warn', 'BMS ще не застосувала правку — оновіть картку трохи пізніше.');
-    } catch (e) { haptic.err(); toast('err', errText(e, 'Не вдалося зберегти')); }
+    } catch (e) { haptic.err(); toast('err', isNetworkError(e) ? OFFLINE_ONLY_ONLINE : errText(e, 'Не вдалося зберегти')); }
     finally { setBusy(false); }
   }, [toast]);
 
+  // Картка коробки: з сервера (і в копію), а без мережі — з копії.
+  const loadBox = useCallback(async (code: string): Promise<Box> => {
+    try { const b = await api.box(code); noteOnline(); remember.box(b); return b; }
+    catch (e) {
+      if (!isNetworkError(e)) throw e;
+      setOnline(false);
+      const local = cached.box(code);
+      if (!local) throw e;
+      return local;
+    }
+  }, []);
+  const loadProduct = useCallback(async (id: number): Promise<Product> => {
+    try { const p = await api.product(id); noteOnline(); remember.product(p); return p; }
+    catch (e) {
+      if (!isNetworkError(e)) throw e;
+      setOnline(false);
+      const local = cached.product(id);
+      if (!local) throw e;
+      return local;
+    }
+  }, []);
+
   const refreshBox = useCallback(async (code: string) => {
-    try { replace({ name: 'box', box: await api.box(code) }); } catch { /* ignore */ }
-  }, [replace]);
+    try { replace({ name: 'box', box: await loadBox(code) }); } catch { /* ignore */ }
+  }, [replace, loadBox]);
 
   // Зі списків приходить коробка без вмісту — довантажуємо картку цілком.
   const openBox = useCallback(async (b: Box) => {
     setBusy(true);
-    try { push({ name: 'box', box: b.contents ? b : await api.box(b.code) }); }
-    catch (e) { toast('err', errText(e, 'Не вдалося відкрити коробку')); }
+    try { push({ name: 'box', box: b.contents ? b : await loadBox(b.code) }); }
+    catch (e) { toast('err', isNetworkError(e) ? 'Немає мережі, а цієї коробки ще нема в копії' : errText(e, 'Не вдалося відкрити коробку')); }
     finally { setBusy(false); }
-  }, [push, toast]);
+  }, [push, toast, loadBox]);
+
+  // Черга досинхронізувалась — перечитати те, що на екрані, зі свіжого сервера.
+  useEffect(() => onSynced(async (done) => {
+    toast('ok', done.length === 1 ? 'Дію з черги виконано' : `Виконано дій з черги: ${done.length}`);
+    const v = stack[stack.length - 1];
+    try {
+      if (v.name === 'product') replace({ name: 'product', product: await api.product(v.product.id) });
+      else if (v.name === 'box' || v.name === 'session') replace({ name: v.name, box: await api.box(v.box.code) } as View);
+      else setReloadKey(k => k + 1);
+    } catch { /* тихо */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [stack, replace, toast]);
 
   // Після вибору коробки зі списку / створення нової для конкретного товару —
   // пакуємо і повертаємось на картку товару з оновленими даними.
@@ -300,8 +387,9 @@ export function App() {
 
   return (
     <div className="wh">
+      <OfflineBar off={off} onFix={() => setFixOpen(true)} />
       {view.name === 'home' && (
-        <Home busy={busy} who={who} onScan={doScan} onSearch={doSearch}
+        <Home key={reloadKey} busy={busy} who={who} onScan={doScan} onSearch={doSearch}
           onBoxes={() => push({ name: 'boxes' })} onOpenBox={b => void openBox(b)} onNewBox={() => push({ name: 'newBox' })} />
       )}
       {view.name === 'choose' && (
@@ -309,7 +397,7 @@ export function App() {
       )}
       {view.name === 'product' && (
         <ProductScreen product={view.product} busy={busy}
-          onRefresh={async () => { try { replace({ name: 'product', product: await api.product(view.product.id) }); } catch { /* ignore */ } }}
+          onRefresh={async () => { try { replace({ name: 'product', product: await loadProduct(view.product.id) }); } catch { /* ignore */ } }}
           onScanBox={async (qty) => {
             const code = await scanOnce('Наведіть на QR коробки');
             if (code === null) return;
@@ -326,9 +414,10 @@ export function App() {
           onUnpack={async (boxCode, qty) => {
             setBusy(true);
             try {
-              await api.unpackFrom(boxCode, view.product.id, qty);
-              toast('ok', `${view.product.number} вийнято з ${boxCode}`);
-              replace({ name: 'product', product: await api.product(view.product.id) });
+              const { queued } = await runOrQueue(() => api.unpackFrom(boxCode, view.product.id, qty),
+                { kind: 'unpackFrom', args: { code: boxCode, product_id: view.product.id, qty: qty ?? null }, label: `${view.product.number} ← вийняти з ${boxCode}` });
+              toast(queued ? 'warn' : 'ok', queued ? QUEUED : `${view.product.number} вийнято з ${boxCode}`);
+              replace({ name: 'product', product: await loadProduct(view.product.id) });
             } catch (e) { toast('err', errText(e, 'Не вдалося вийняти')); }
             finally { setBusy(false); }
           }}
@@ -343,7 +432,7 @@ export function App() {
           onOpenProduct={p => push({ name: 'product', product: p })} />
       )}
       {view.name === 'boxes' && (
-        <BoxesScreen pickFor={view.pickFor}
+        <BoxesScreen key={reloadKey} pickFor={view.pickFor}
           onOpen={b => (view.pickFor ? void packFromPicker(b, view.pickFor) : void openBox(b))}
           onNew={() => push({ name: 'newBox', pickFor: view.pickFor })} />
       )}
@@ -352,7 +441,7 @@ export function App() {
           onCreated={async (b) => { if (view.pickFor) await packFromPicker(b, view.pickFor); else replace({ name: 'box', box: b }); }} />
       )}
       {view.name === 'session' && (
-        <SessionScreen box={view.box} packInto={packInto} toast={toast}
+        <SessionScreen box={view.box} packInto={packInto} toast={toast} scanResolve={scanResolve}
           onDone={async () => { back(); await refreshBox(view.box.code); }} />
       )}
 
@@ -364,7 +453,58 @@ export function App() {
         ))}
       </div>
       {busy && <div className="wh-busy" />}
+      {fixOpen && <FixQueueSheet ops={off.failed} onClose={() => setFixOpen(false)} />}
     </div>
+  );
+}
+
+/* ───────────────────────────── Офлайн ────────────────────────────────────── */
+
+// Смужка стану мережі. Живе рівно стільки, скільки є що сказати: без мережі,
+// синхронізація, або сервер відмовив (тоді — «розібрати»).
+function OfflineBar({ off, onFix }: { off: ReturnType<typeof useOffline>; onFix: () => void }) {
+  if (off.failed.length) {
+    return (
+      <button className="wh-netbar err" onClick={onFix}>
+        <IAlert size={20} /> Не синхронізовано: {off.failed.length} · розібрати
+      </button>
+    );
+  }
+  if (!off.online) {
+    return (
+      <div className="wh-netbar warn">
+        <IAlert size={20} /> Немає мережі — працюю з копією{off.pending ? ` · у черзі ${off.pending}` : ''}
+      </div>
+    );
+  }
+  if (off.pending || off.syncing) {
+    return <div className="wh-netbar"><IRefresh size={20} /> Синхронізую{off.pending ? ` · ${off.pending}` : '…'}</div>;
+  }
+  return null;
+}
+
+// Сервер відмовив у дії з черги: черга стоїть, поки людина не вирішить.
+// «Перенести» — для «уже лежить в іншій коробці»; «Повторити» — якщо причина
+// зникла; «Прибрати» — визнати, що дія не потрібна (копія лишиться як є до
+// наступного оновлення з сервера).
+function FixQueueSheet({ ops, onClose }: { ops: Op[]; onClose: () => void }) {
+  useEffect(() => { if (ops.length === 0) onClose(); }, [ops.length, onClose]);
+  return (
+    <Sheet title="Не синхронізовано" onClose={onClose}>
+      {ops.map(op => (
+        <div key={op.id} className="wh-card" style={{ padding: 14 }}>
+          <div style={{ fontWeight: 800, fontSize: 18 }}>{op.label}</div>
+          <div className="wh-hint" style={{ marginTop: 4 }}>{op.error || 'Сервер відмовив'}</div>
+          <div className="wh-row-btns" style={{ marginTop: 10 }}>
+            {op.kind === 'pack' && op.errorCode === 'elsewhere' && (
+              <button className="wh-btn sm primary" onClick={() => retry(op.id, { move: true })}><IMove size={20} /> Перенести</button>
+            )}
+            <button className="wh-btn sm" onClick={() => retry(op.id)}><IRefresh size={20} /> Повторити</button>
+            <button className="wh-btn sm danger" onClick={() => discard(op.id)}><ITrash size={20} /> Прибрати</button>
+          </div>
+        </div>
+      ))}
+    </Sheet>
   );
 }
 
@@ -379,7 +519,9 @@ function Home({ busy, who, onScan, onSearch, onBoxes, onOpenBox, onNewBox }: {
   const [boxes, setBoxes] = useState<Box[] | null>(null);
   const load = useCallback(() => {
     api.events({ limit: 8 }).then(r => setEvents(r.events)).catch(() => {});
-    api.boxes().then(r => setBoxes(r.boxes.filter(b => b.status !== 'archived'))).catch(() => setBoxes([]));
+    api.boxes()
+      .then(r => { noteOnline(); remember.boxes(r.boxes); setBoxes(r.boxes.filter(b => b.status !== 'archived')); })
+      .catch(e => { if (isNetworkError(e)) { setOnline(false); setBoxes(cached.boxes().filter(b => b.status !== 'archived')); } else setBoxes([]); });
   }, []);
   useEffect(load, [load]);
   const stats = useMemo(() => ({
@@ -673,10 +815,18 @@ function BoxScreen({ box, busy, setBusy, toast, onRefresh, onSession, onDeleted,
   useEffect(() => { setTitle(box.title || ''); setLoc(box.location || ''); setEdit(false); setMore(false); }, [box.code, box.title, box.location]);
   const contents = box.contents || [];
 
-  const run = async (fn: () => Promise<unknown>, okMsg?: string) => {
+  // Дія коробки: онлайн — як є; без мережі — у чергу (якщо дія це дозволяє:
+  // видалення і «розпакувати все» — лише онлайн).
+  const run = async (fn: () => Promise<unknown>, okMsg?: string, fallback?: { kind: Op['kind']; args: Record<string, any>; label: string }) => {
     setBusy(true);
-    try { await fn(); if (okMsg) toast('ok', okMsg); await onRefresh(); }
-    catch (e) { toast('err', errText(e, 'Не вдалося')); }
+    try {
+      if (fallback) {
+        const { queued } = await runOrQueue(fn, fallback);
+        if (queued) toast('warn', QUEUED); else if (okMsg) toast('ok', okMsg);
+      } else { await fn(); noteOnline(); if (okMsg) toast('ok', okMsg); }
+      await onRefresh();
+    }
+    catch (e) { toast('err', isNetworkError(e) ? OFFLINE_ONLY_ONLINE : errText(e, 'Не вдалося')); }
     finally { setBusy(false); }
   };
 
@@ -699,7 +849,8 @@ function BoxScreen({ box, busy, setBusy, toast, onRefresh, onSession, onDeleted,
                   <input className="wh-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="Назва (що всередині)" />
                   <input className="wh-input" value={loc} onChange={e => setLoc(e.target.value)} placeholder="Де стоїть" />
                   <div className="wh-row-btns">
-                    <button className="wh-btn sm primary" disabled={busy} onClick={() => run(() => api.patchBox(box.code, { title, location: loc }), 'Збережено')}>Зберегти</button>
+                    <button className="wh-btn sm primary" disabled={busy} onClick={() => run(() => api.patchBox(box.code, { title, location: loc }), 'Збережено',
+                      { kind: 'patchBox', args: { code: box.code, patch: { title, location: loc } }, label: `${box.code}: назва / місце` })}>Зберегти</button>
                     <button className="wh-btn sm" onClick={() => setEdit(false)}>Скасувати</button>
                   </div>
                 </div>
@@ -718,7 +869,7 @@ function BoxScreen({ box, busy, setBusy, toast, onRefresh, onSession, onDeleted,
           <div className="wh-banner warn">
             <IAlert size={24} />
             <div>Коробку треба перевірити<div className="sub">Її відкривали або вміст імпортовано. Проскануйте вміст і підтвердьте.</div></div>
-            <button className="wh-btn sm" disabled={busy} onClick={() => run(() => api.check(box.code), 'Коробку звірено')}><ICheck size={22} />Звірено</button>
+            <button className="wh-btn sm" disabled={busy} onClick={() => run(() => api.check(box.code), 'Коробку звірено', { kind: 'check', args: { code: box.code }, label: `${box.code}: звірено` })}><ICheck size={22} />Звірено</button>
           </div>
         )}
 
@@ -737,7 +888,8 @@ function BoxScreen({ box, busy, setBusy, toast, onRefresh, onSession, onDeleted,
                   </span>
                   <span className="wh-item-sub">{[it.product.brand, it.product.model, it.product.color].filter(Boolean).join(' · ')}</span>
                 </button>
-                <button className="wh-btn sm" disabled={busy} title="Вийняти" onClick={() => run(() => api.unpackFrom(box.code, it.product_id, it.qty > 1 ? 1 : undefined), `${it.product.number} вийнято`)}><IPackOut size={24} /></button>
+                <button className="wh-btn sm" disabled={busy} title="Вийняти" onClick={() => run(() => api.unpackFrom(box.code, it.product_id, it.qty > 1 ? 1 : undefined), `${it.product.number} вийнято`,
+                  { kind: 'unpackFrom', args: { code: box.code, product_id: it.product_id, qty: it.qty > 1 ? 1 : null }, label: `${it.product.number} ← вийняти з ${box.code}` })}><IPackOut size={24} /></button>
               </div>
             ))}
           </div>
@@ -752,9 +904,9 @@ function BoxScreen({ box, busy, setBusy, toast, onRefresh, onSession, onDeleted,
         <Sheet title={`Коробка ${box.code}`} onClose={() => setMore(false)}>
           <button className="wh-btn primary" disabled={busy} onClick={() => { setMore(false); onPrintLabel(); }}><IPrinter size={26} /> Надрукувати етикетку</button>
           {box.status === 'sealed'
-            ? <button className="wh-btn" disabled={busy} onClick={() => { setMore(false); void run(() => api.open(box.code), 'Коробку відкрито'); }}><IUnlock size={26} /> Відкрити</button>
-            : <button className="wh-btn" disabled={busy || box.status === 'archived'} onClick={() => { setMore(false); void run(() => api.seal(box.code), 'Запечатано'); }}><ILock size={26} /> Запечатати</button>}
-          {box.needs_check && <button className="wh-btn" disabled={busy} onClick={() => { setMore(false); void run(() => api.check(box.code), 'Коробку звірено'); }}><ICheck size={26} /> Звірено</button>}
+            ? <button className="wh-btn" disabled={busy} onClick={() => { setMore(false); void run(() => api.open(box.code), 'Коробку відкрито', { kind: 'open', args: { code: box.code }, label: `${box.code}: відкрити` }); }}><IUnlock size={26} /> Відкрити</button>
+            : <button className="wh-btn" disabled={busy || box.status === 'archived'} onClick={() => { setMore(false); void run(() => api.seal(box.code), 'Запечатано', { kind: 'seal', args: { code: box.code }, label: `${box.code}: запечатати` }); }}><ILock size={26} /> Запечатати</button>}
+          {box.needs_check && <button className="wh-btn" disabled={busy} onClick={() => { setMore(false); void run(() => api.check(box.code), 'Коробку звірено', { kind: 'check', args: { code: box.code }, label: `${box.code}: звірено` }); }}><ICheck size={26} /> Звірено</button>}
           <button className="wh-btn" onClick={() => { setMore(false); setEdit(true); }}><IEdit size={26} /> Назва / місце</button>
           <button className="wh-btn" disabled={busy || contents.length === 0} onClick={async () => {
             setMore(false);
@@ -767,7 +919,7 @@ function BoxScreen({ box, busy, setBusy, toast, onRefresh, onSession, onDeleted,
             if (!ok) return;
             setBusy(true);
             try { await api.deleteBox(box.code, withItems); toast('ok', `Коробку ${box.code} видалено`); onDeleted(); }
-            catch (e) { toast('err', errText(e, 'Не вдалося видалити')); }
+            catch (e) { toast('err', isNetworkError(e) ? OFFLINE_ONLY_ONLINE : errText(e, 'Не вдалося видалити')); }
             finally { setBusy(false); }
           }}><ITrash size={26} /> Видалити коробку</button>
         </Sheet>
@@ -778,9 +930,10 @@ function BoxScreen({ box, busy, setBusy, toast, onRefresh, onSession, onDeleted,
 
 /* ───────────────────────────── Сесія пакування ───────────────────────────── */
 
-function SessionScreen({ box, packInto, toast, onDone }: {
+function SessionScreen({ box, packInto, toast, onDone, scanResolve }: {
   box: Box; packInto: (box: Box, p: Product, qty: number) => Promise<Product | null>;
   toast: (k: Toast['kind'], t: string) => void; onDone: () => void;
+  scanResolve: (code: string) => Promise<ScanResult>;
 }) {
   const [log, setLog] = useState<{ number: string; size: string; qty: number }[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -802,10 +955,12 @@ function SessionScreen({ box, packInto, toast, onDone }: {
     if (!text) return;
     setSearching(true);
     try {
-      const r = await api.search(text);
-      if (r.products.length === 0) { toast('warn', `«${text}» не знайдено`); setHits(null); }
-      else if (r.products.length === 1) await packProduct(r.products[0]);
-      else setHits(r.products);
+      let products: Product[];
+      try { const r = await api.search(text); noteOnline(); remember.products(r.products); products = r.products; }
+      catch (e) { if (!isNetworkError(e)) throw e; setOnline(false); products = cached.byNumber(text); }
+      if (products.length === 0) { toast('warn', `«${text}» не знайдено`); setHits(null); }
+      else if (products.length === 1) await packProduct(products[0]);
+      else setHits(products);
     } catch (e) { toast('err', errText(e, 'Пошук не вдався')); }
     finally { setSearching(false); }
   };
@@ -814,14 +969,14 @@ function SessionScreen({ box, packInto, toast, onDone }: {
     setScanning(true);
     stopRef.current = scanMany(`Пакую в ${box.code} · скануйте товари поспіль`, async (code) => {
       try {
-        const r = await api.scan(code);
+        const r = await scanResolve(code);
         if (r.kind === 'box') { toast('warn', `Це коробка ${r.box.code}, а не товар`); return false; }
         const p = r.kind === 'product' ? r.product : (r.products.length === 1 ? r.products[0] : null);
         if (!p) { toast('warn', 'Кілька розмірів з таким номером — відкрийте товар окремо'); return false; }
         if (p.available_qty <= 0) { toast('warn', `${p.number} ПРОДАНО — не кладу`); return false; }
         const done = await packInto(box, p, 1);
         if (done) setLog(l => [{ number: p.number, size: p.size, qty: 1 }, ...l]);
-      } catch (e) { toast('err', errText(e, 'Не впізнав код')); }
+      } catch (e) { toast('err', isNetworkError(e) ? 'Немає мережі, і цього коду ще нема в копії' : errText(e, 'Не впізнав код')); }
       return false;
     }, () => setScanning(false));
   };
@@ -883,7 +1038,11 @@ function BoxesScreen({ pickFor, onOpen, onNew }: { pickFor?: { product: Product;
   const [boxes, setBoxes] = useState<Box[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [q, setQ] = useState('');
-  useEffect(() => { api.boxes().then(r => setBoxes(r.boxes.filter(b => b.status !== 'archived'))).catch(e => setErr(errText(e, 'Не вдалося завантажити'))); }, []);
+  useEffect(() => {
+    api.boxes()
+      .then(r => { noteOnline(); remember.boxes(r.boxes); setBoxes(r.boxes.filter(b => b.status !== 'archived')); })
+      .catch(e => { if (isNetworkError(e)) { setOnline(false); setBoxes(cached.boxes().filter(b => b.status !== 'archived')); } else setErr(errText(e, 'Не вдалося завантажити')); });
+  }, []);
   const open = (b: Box) => onOpen(b);
   const list = useMemo(() => {
     const f = q.trim().toLowerCase();
@@ -932,10 +1091,18 @@ function NewBoxScreen({ onCreated, toast }: { onCreated: (b: Box) => void; toast
   const [title, setTitle] = useState('');
   const [loc, setLoc] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { api.nextCode(cat).then(r => setCode(r.code)).catch(() => {}); }, [cat]);
+  const [noNet, setNoNet] = useState(false);
+  useEffect(() => { api.nextCode(cat).then(r => { setCode(r.code); setNoNet(false); }).catch(e => { if (isNetworkError(e)) setNoNet(true); }); }, [cat]);
   const create = async () => {
     setBusy(true);
-    try { const b = await api.createBox({ code: code.trim(), category: cat, title: title.trim() || undefined, location: loc.trim() || undefined }); toast('ok', `Коробку ${b.code} створено`); onCreated(b); }
+    const clean = code.trim().toUpperCase();
+    try {
+      const { result, queued } = await runOrQueue(
+        () => api.createBox({ code: clean, category: cat, title: title.trim() || undefined, location: loc.trim() || undefined }),
+        { kind: 'createBox', args: { code: clean, category: cat, title: title.trim() || undefined, location: loc.trim() || undefined }, label: `нова коробка ${clean}` });
+      if (result) { remember.box(result); toast('ok', `Коробку ${result.code} створено`); onCreated(result); }
+      else if (queued) { toast('warn', QUEUED); const local = cached.box(clean); if (local) onCreated(local); }
+    }
     catch (e) { toast('err', errText(e, 'Не вдалося створити')); }
     finally { setBusy(false); }
   };
@@ -955,6 +1122,7 @@ function NewBoxScreen({ onCreated, toast }: { onCreated: (b: Box) => void; toast
           <input className="wh-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="Назва (що всередині)" />
           <input className="wh-input" value={loc} onChange={e => setLoc(e.target.value)} placeholder="Де стоїть (стелаж, полиця)" />
         </div>
+        {noNet && <div className="wh-banner warn"><IAlert size={24} /><div>Немає мережі — код підказати не можу.<div className="sub">Введіть код руками (напр. {cat}12). Якщо такий уже є, дізнаємось при синхронізації.</div></div></div>}
         <div className="wh-hint">Етикетку коробки (QR <b>bms:b:{code || '…'}</b>) можна надрукувати одразу після створення: «···» → «Надрукувати етикетку».</div>
       </div>
       <Bar>

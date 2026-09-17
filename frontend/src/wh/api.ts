@@ -47,6 +47,16 @@ export class ApiError extends Error {
 
 const TOKEN_KEY = 'bmswh-token';
 
+/** Мережі нема / запит не дійшов (fetch кинув TypeError) — на відміну від
+ *  ApiError, де сервер ВІДПОВІВ відмовою. Лише такі помилки дають право
+ *  покласти дію в офлайн-чергу. */
+export function isNetworkError(e: unknown): boolean {
+  if (e instanceof ApiError) return false;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  const name = (e as any)?.name; const msg = String((e as any)?.message || '');
+  return name === 'TypeError' || name === 'AbortError' || /fetch|network|load failed/i.test(msg);
+}
+
 (function pickDevToken() {
   try {
     const u = new URL(location.href);
@@ -119,21 +129,24 @@ export const api = {
   boxes: () => req<{ boxes: Box[] }>('GET', '/api/wh/boxes'),
   box: (code: string) => req<Box>('GET', `/api/wh/boxes/${encodeURIComponent(code)}`),
   nextCode: (category: string) => req<{ code: string }>('GET', `/api/wh/boxes/next-code?${q({ category })}`),
-  createBox: (p: { code?: string; category?: string; title?: string; location?: string }) => req<Box>('POST', '/api/wh/boxes', p),
-  patchBox: (code: string, p: Partial<Pick<Box, 'title' | 'location' | 'note' | 'needs_check'>>) =>
-    req<Box>('PATCH', `/api/wh/boxes/${encodeURIComponent(code)}`, p),
-  seal: (code: string) => req<Box>('POST', `/api/wh/boxes/${encodeURIComponent(code)}/seal`),
-  open: (code: string) => req<Box>('POST', `/api/wh/boxes/${encodeURIComponent(code)}/open`),
-  check: (code: string) => req<Box>('POST', `/api/wh/boxes/${encodeURIComponent(code)}/check`),
+  // op_id — ідемпотентність: повтор із тим самим id (офлайн-черга, обрив після
+  // коміту) повертає збережений результат і нічого не застосовує вдруге.
+  createBox: (p: { code?: string; category?: string; title?: string; location?: string }, opId?: string) =>
+    req<Box>('POST', '/api/wh/boxes', { ...p, op_id: opId }),
+  patchBox: (code: string, p: Partial<Pick<Box, 'title' | 'location' | 'note' | 'needs_check'>>, opId?: string) =>
+    req<Box>('PATCH', `/api/wh/boxes/${encodeURIComponent(code)}`, { ...p, op_id: opId }),
+  seal: (code: string, opId?: string) => req<Box>('POST', `/api/wh/boxes/${encodeURIComponent(code)}/seal${opId ? `?${q({ op_id: opId })}` : ''}`),
+  open: (code: string, opId?: string) => req<Box>('POST', `/api/wh/boxes/${encodeURIComponent(code)}/open${opId ? `?${q({ op_id: opId })}` : ''}`),
+  check: (code: string, opId?: string) => req<Box>('POST', `/api/wh/boxes/${encodeURIComponent(code)}/check${opId ? `?${q({ op_id: opId })}` : ''}`),
   deleteBox: (code: string, force = false) =>
     req<{ deleted: string; unpacked_items: number }>('DELETE', `/api/wh/boxes/${encodeURIComponent(code)}${force ? '?force=true' : ''}`),
-  pack: (code: string, product_id: number, qty = 1, move = false) =>
+  pack: (code: string, product_id: number, qty = 1, move = false, opId?: string) =>
     req<{ ok: boolean; box: string; product: Product; moved_from: string[]; warning: string | null }>(
-      'POST', `/api/wh/boxes/${encodeURIComponent(code)}/pack`, { product_id, qty, move }),
-  unpackFrom: (code: string, product_id: number, qty?: number) =>
-    req<{ ok: boolean }>('POST', `/api/wh/boxes/${encodeURIComponent(code)}/unpack`, { product_id, qty: qty ?? null }),
-  unpack: (product_id: number, qty?: number) =>
-    req<{ ok: boolean; unpacked: { box_code: string; qty: number }[] }>('POST', '/api/wh/unpack', { product_id, qty: qty ?? null }),
+      'POST', `/api/wh/boxes/${encodeURIComponent(code)}/pack`, { product_id, qty, move, op_id: opId }),
+  unpackFrom: (code: string, product_id: number, qty?: number, opId?: string) =>
+    req<{ ok: boolean }>('POST', `/api/wh/boxes/${encodeURIComponent(code)}/unpack`, { product_id, qty: qty ?? null, op_id: opId }),
+  unpack: (product_id: number, qty?: number, opId?: string) =>
+    req<{ ok: boolean; unpacked: { box_code: string; qty: number }[] }>('POST', '/api/wh/unpack', { product_id, qty: qty ?? null, op_id: opId }),
   unpackAll: (code: string) => req<{ ok: boolean; unpacked_items: number; units: number }>(
     'POST', `/api/wh/boxes/${encodeURIComponent(code)}/unpack-all`),
   events: (p: { box?: string; product_id?: number; limit?: number }) =>

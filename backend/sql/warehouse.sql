@@ -103,3 +103,16 @@ CREATE TABLE IF NOT EXISTS wh_staff (
     last_seen_at TIMESTAMPTZ,
     note         TEXT
 );
+
+-- Ідемпотентність дій з телефона. Mini App працює і без мережі: дії лягають
+-- у чергу на телефоні й досилаються пізніше — з повторами. Повтор `pack`
+-- без цього подвоював би кількість (qty + qty). Клієнт дає кожній дії
+-- op_id (uuid); сервер спершу «займає» його, виконує дію, зберігає результат,
+-- а на повтор віддає збережений результат, нічого не застосовуючи вдруге.
+CREATE TABLE IF NOT EXISTS wh_client_ops (
+    op_id      TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,
+    actor      TEXT,
+    result     JSONB,                                -- NULL = ще виконується
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
