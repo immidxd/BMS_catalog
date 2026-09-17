@@ -91,7 +91,7 @@ export type WhoAmI = {
   user_id: number | null; name: string; access: boolean;
   signature_warehouse_bot: boolean; signature_shop_bot: boolean; in_staff: boolean;
   staff_status: 'owner' | 'pending' | 'active' | 'blocked' | null;
-  server: { warehouse_bot_token_set: boolean; staff_ids_set: boolean };
+  server: { warehouse_bot_token_set: boolean; staff_ids_set: boolean; warehouse_bot?: { username: string | null; id: number | null } | null; app_url?: string | null };
   problems: string[];
 };
 

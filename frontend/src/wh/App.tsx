@@ -7,9 +7,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, ApiError, hasAuth, type Box, type Condition, type Product, type ScanResult, type WhEvent, type WhoAmI } from './api';
 import { canScan, confirmDialog, haptic, scanMany, scanOnce } from './scanner';
+import { addToHome, appLink, canAddToHome, copyText, homeScreenStatus } from './homescreen';
 import { tg, isInTelegram } from '../telegram';
 import {
-  IAlert, IBox, IBoxes, ICheck, IChevron, IEdit, ILock, IMore, IMove, IPackIn, IPackOut,
+  IAlert, IBox, IBoxes, ICheck, IChevron, IEdit, IHome, ILink, ILock, IMore, IMove, IPackIn, IPackOut,
   IPhoto, IPlus, IPrinter, IRefresh, IScan, ISearch, ITrash, IUnlock, IX,
 } from './icons';
 
@@ -301,7 +302,7 @@ export function App() {
   return (
     <div className="wh">
       {view.name === 'home' && (
-        <Home busy={busy} who={who} onScan={doScan} onSearch={doSearch}
+        <Home busy={busy} who={who} toast={toast} onScan={doScan} onSearch={doSearch}
           onBoxes={() => push({ name: 'boxes' })} onOpenBox={b => void openBox(b)} onNewBox={() => push({ name: 'newBox' })} />
       )}
       {view.name === 'choose' && (
@@ -370,11 +371,15 @@ export function App() {
 
 /* ───────────────────────────── Головна ───────────────────────────────────── */
 
-function Home({ busy, who, onScan, onSearch, onBoxes, onOpenBox, onNewBox }: {
-  busy: boolean; who: WhoAmI | null;
+function Home({ busy, who, toast, onScan, onSearch, onBoxes, onOpenBox, onNewBox }: {
+  busy: boolean; who: WhoAmI | null; toast: (k: Toast['kind'], t: string) => void;
   onScan: () => void; onSearch: (t: string) => void; onBoxes: () => void; onOpenBox: (b: Box) => void; onNewBox: () => void;
 }) {
   const [q, setQ] = useState('');
+  // Ярлик на «Домівці»: показуємо кнопку, поки Telegram каже, що ярлика ще нема.
+  const [homeStatus, setHomeStatus] = useState<'unsupported' | 'unknown' | 'added' | 'missed'>('unknown');
+  useEffect(() => { homeScreenStatus(setHomeStatus); }, []);
+  const botUser = who?.server?.warehouse_bot?.username || '';
   const [events, setEvents] = useState<WhEvent[]>([]);
   const [boxes, setBoxes] = useState<Box[] | null>(null);
   const load = useCallback(() => {
@@ -446,6 +451,27 @@ function Home({ busy, who, onScan, onSearch, onBoxes, onOpenBox, onNewBox }: {
           <div className="wh-card flush">
             <div className="wh-card-head" style={{ padding: '14px 16px 6px' }}><span className="wh-label">Останні дії</span></div>
             <div className="wh-list">{events.map(e => <EventRow key={e.id} e={e} />)}</div>
+          </div>
+        )}
+
+        {(botUser || (canAddToHome() && homeStatus !== 'added')) && (
+          <div className="wh-card wh-quick">
+            <div className="wh-label">Швидкий доступ</div>
+            {canAddToHome() && homeStatus !== 'added' && homeStatus !== 'unsupported' && (
+              <button className="wh-btn" onClick={() => addToHome(() => { setHomeStatus('added'); haptic.ok(); toast('ok', 'Ярлик додано на екран «Домівка»'); })}>
+                <IHome size={24} /> Додати на екран «Домівка»
+              </button>
+            )}
+            {botUser && (
+              <button className="wh-btn ghost" onClick={async () => {
+                const ok = await copyText(appLink(botUser));
+                if (ok) { haptic.ok(); toast('ok', 'Посилання скопійовано — надішліть працівнику'); }
+                else toast('warn', appLink(botUser));
+              }}>
+                <ILink size={24} /> Скопіювати посилання
+              </button>
+            )}
+            <div className="wh-hint">Ярлик відкриває застосунок одразу, без чату з ботом. Посилання: t.me/{botUser || '…'}?startapp</div>
           </div>
         )}
       </div>

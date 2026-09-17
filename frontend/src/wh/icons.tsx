@@ -86,3 +86,9 @@ export const IRefresh = ({ size = 24, ...p }: P) => (
 export const IPrinter = ({ size = 24, ...p }: P) => (
   <svg {...base(size, p)}><path d="M7 8V4h10v4M7 16H4.5A1.5 1.5 0 0 1 3 14.5v-4A2.5 2.5 0 0 1 5.5 8h13A2.5 2.5 0 0 1 21 10.5v4a1.5 1.5 0 0 1-1.5 1.5H17" /><rect x="7" y="13" width="10" height="7" rx="1" /></svg>
 );
+export const IHome = ({ size = 24, ...p }: P) => (
+  <svg {...base(size, p)}><path d="M3.5 11 12 4l8.5 7" /><path d="M5.5 9.5V20h13V9.5" /><path d="M10 20v-6h4v6" /></svg>
+);
+export const ILink = ({ size = 24, ...p }: P) => (
+  <svg {...base(size, p)}><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.2 1.2" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.2-1.2" /></svg>
+);
