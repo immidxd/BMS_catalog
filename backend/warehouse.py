@@ -297,17 +297,19 @@ def normalize_box_code(code: str) -> str:
 
 def _event(db: Session, actor: str, kind: str, *, box: Optional[Dict[str, Any]] = None,
            product: Optional[Dict[str, Any]] = None, qty: Optional[int] = None,
-           details: Optional[Dict[str, Any]] = None) -> None:
-    db.execute(text("""
-        INSERT INTO wh_events (actor, kind, box_id, box_code, product_id, productnumber, qty, details)
-        VALUES (:actor, :kind, :box_id, :box_code, :pid, :pnum, :qty, CAST(:details AS jsonb))
+           details: Optional[Dict[str, Any]] = None, undo_of: Optional[int] = None) -> int:
+    r = db.execute(text("""
+        INSERT INTO wh_events (actor, kind, box_id, box_code, product_id, productnumber, qty, details, undo_of)
+        VALUES (:actor, :kind, :box_id, :box_code, :pid, :pnum, :qty, CAST(:details AS jsonb), :undo_of)
+        RETURNING id
     """), {
         "actor": actor, "kind": kind,
         "box_id": box["id"] if box else None, "box_code": box["code"] if box else None,
         "pid": product["id"] if product else None,
         "pnum": product.get("productnumber") if product else None,
-        "qty": qty, "details": json.dumps(details or {}, ensure_ascii=False),
-    })
+        "qty": qty, "details": json.dumps(details or {}, ensure_ascii=False), "undo_of": undo_of,
+    }).scalar()
+    return int(r)
 
 
 _PRODUCT_SQL = """
@@ -621,19 +623,191 @@ def box_detail(code: str, db: Session = Depends(get_db), _: str = Depends(requir
     return box
 
 
+UNDOABLE_KINDS = {"pack", "unpack", "move", "seal", "open", "check", "box_create", "box_delete", "box_edit"}
+
+
+def _events_query(db: Session, *, box: Optional[str], product_id: Optional[int], actor: Optional[str],
+                  kind: Optional[str], limit: int, offset: int) -> List[Dict[str, Any]]:
+    """Події з прапорцем `undone`: скасована = має undone_by, і та подія-
+    обернення сама не скасована («повернути» знімає прапорець)."""
+    conds, params = [], {"lim": limit, "off": offset}
+    if box:
+        conds.append("e.box_code = :bc"); params["bc"] = normalize_box_code(box)
+    if product_id:
+        conds.append("e.product_id = :pid"); params["pid"] = int(product_id)
+    if actor:
+        conds.append("e.actor ILIKE :actor"); params["actor"] = f"%{actor}%"
+    if kind:
+        conds.append("e.kind = :kind"); params["kind"] = kind
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    rows = db.execute(text(f"""
+        SELECT e.*, (e.undone_by IS NOT NULL AND u.undone_by IS NULL) AS undone,
+               u.actor AS undone_actor, u.at AS undone_at
+        FROM wh_events e LEFT JOIN wh_events u ON u.id = e.undone_by
+        {where} ORDER BY e.at DESC, e.id DESC LIMIT :lim OFFSET :off
+    """), params).mappings().all()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["undoable"] = d["kind"] in UNDOABLE_KINDS and not d["undone"]
+        out.append(d)
+    return out
+
+
 @router.get("/events")
 def events(box: Optional[str] = None, product_id: Optional[int] = None,
-           limit: int = Query(50, ge=1, le=500), db: Session = Depends(get_db),
-           _: str = Depends(require_staff)):
-    conds, params = [], {"lim": limit}
-    if box:
-        conds.append("box_code = :bc"); params["bc"] = normalize_box_code(box)
-    if product_id:
-        conds.append("product_id = :pid"); params["pid"] = int(product_id)
-    where = ("WHERE " + " AND ".join(conds)) if conds else ""
-    rows = db.execute(text(f"SELECT * FROM wh_events {where} ORDER BY at DESC, id DESC LIMIT :lim"),
-                      params).mappings().all()
-    return {"events": [dict(r) for r in rows]}
+           actor: Optional[str] = None, kind: Optional[str] = None,
+           limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0),
+           db: Session = Depends(get_db), _: str = Depends(require_staff)):
+    return {"events": _events_query(db, box=box, product_id=product_id, actor=actor, kind=kind,
+                                    limit=limit, offset=offset)}
+
+
+# ───────────────────────────── історія: скасувати / повернути ────────────────
+# Модерація дій працівників: власник у BMS бачить усе й може відкотити будь-яку
+# дію. Скасування — НОВА подія-обернення (той самий словник родів), а не
+# видалення; повернення — скасування обернення. Робити це може лише BMS
+# (адмін-токен) або власник з телефона.
+
+def _require_moderator(actor: str) -> None:
+    if actor == "bms":
+        return
+    m = re.match(r"^tg:(\d+)", actor or "")
+    if m and int(m.group(1)) in _owner_ids():
+        return
+    raise HTTPException(status_code=403, detail="Скасовувати дії може лише власник або BMS")
+
+
+def _box_by_id_or_code(db: Session, box_id: Optional[int], code: Optional[str]) -> Optional[Dict[str, Any]]:
+    if box_id:
+        r = db.execute(text("SELECT * FROM wh_boxes WHERE id = :id FOR UPDATE"), {"id": int(box_id)}).mappings().first()
+        if r:
+            return dict(r)
+    return _box_row(db, code, for_update=True) if code else None
+
+
+def _pack_rows(db: Session, actor: str, box: Dict[str, Any], prod: Dict[str, Any], qty: int) -> None:
+    db.execute(text("""
+        INSERT INTO wh_box_items (box_id, product_id, productnumber, size, color, qty, packed_by)
+        VALUES (:b, :pid, :pnum, :size, :color, :qty, :by)
+        ON CONFLICT (box_id, product_id) WHERE unpacked_at IS NULL
+        DO UPDATE SET qty = wh_box_items.qty + EXCLUDED.qty, packed_at = now(), packed_by = EXCLUDED.packed_by
+    """), {"b": box["id"], "pid": prod["id"], "pnum": prod.get("productnumber"), "size": prod.get("size"),
+           "color": prod.get("color"), "qty": qty, "by": actor})
+    if box["status"] == "sealed":
+        db.execute(text("UPDATE wh_boxes SET status = 'open', updated_at = now() WHERE id = :id"), {"id": box["id"]})
+
+
+@router.post("/events/{event_id}/undo")
+def event_undo(event_id: int, db: Session = Depends(get_db), actor: str = Depends(require_staff)):
+    """Скасувати дію (або повернути скасовану — це те саме, застосоване до події-обернення)."""
+    _require_moderator(actor)
+    e = db.execute(text("SELECT * FROM wh_events WHERE id = :id FOR UPDATE"), {"id": int(event_id)}).mappings().first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Події немає")
+    e = dict(e)
+    if e["kind"] not in UNDOABLE_KINDS:
+        raise HTTPException(status_code=409, detail=f"Дію «{e['kind']}» скасувати не можна")
+    if e.get("undone_by"):
+        u = db.execute(text("SELECT undone_by FROM wh_events WHERE id = :id"), {"id": e["undone_by"]}).scalar()
+        if u is None:
+            raise HTTPException(status_code=409, detail="Цю дію вже скасовано — її можна лише повернути")
+    details = e.get("details") or {}
+    if isinstance(details, str):
+        details = json.loads(details or "{}")
+    qty = int(e.get("qty") or 1)
+    prod = _load_product(db, e["product_id"]) if e.get("product_id") else None
+    if e.get("product_id") and not prod:
+        prod = {"id": e["product_id"], "productnumber": e.get("productnumber"), "number": (e.get("productnumber") or "").lstrip("#"),
+                "size": None, "color": None}
+    box = _box_by_id_or_code(db, e.get("box_id"), e.get("box_code"))
+    kind = e["kind"]
+    new_id: int
+
+    if kind == "pack":
+        if not box:
+            raise HTTPException(status_code=409, detail="Коробки вже немає")
+        done = _unpack_rows(db, actor, e["product_id"], box["id"], qty)
+        if not done:
+            raise HTTPException(status_code=409, detail=f"{prod['number'] if prod else ''} уже не лежить у {box['code']}")
+        new_id = _event(db, actor, "unpack", box=box, product=prod, qty=sum(d["qty"] for d in done),
+                        details={"undo": True}, undo_of=e["id"])
+    elif kind == "move":
+        # Повернути з цієї коробки туди, звідки взяли.
+        src_code = (details.get("from") or [None])[0]
+        src = _box_row(db, src_code, for_update=True) if src_code else None
+        if not src or src["status"] == "archived":
+            raise HTTPException(status_code=409, detail=f"Коробки {src_code or '?'} , звідки переносили, вже немає")
+        if not box:
+            raise HTTPException(status_code=409, detail="Коробки вже немає")
+        done = _unpack_rows(db, actor, e["product_id"], box["id"], qty)
+        if not done:
+            raise HTTPException(status_code=409, detail=f"{prod['number'] if prod else ''} уже не лежить у {box['code']}")
+        _pack_rows(db, actor, src, prod, sum(d["qty"] for d in done))
+        new_id = _event(db, actor, "move", box=src, product=prod, qty=sum(d["qty"] for d in done),
+                        details={"from": [box["code"]], "undo": True}, undo_of=e["id"])
+    elif kind == "unpack":
+        if not box or box["status"] == "archived":
+            raise HTTPException(status_code=409, detail="Коробки, звідки виймали, вже немає")
+        elsewhere = db.execute(text("""
+            SELECT b.code FROM wh_box_items i JOIN wh_boxes b ON b.id = i.box_id
+            WHERE i.product_id = :pid AND i.unpacked_at IS NULL AND i.box_id <> :b
+        """), {"pid": e["product_id"], "b": box["id"]}).scalars().all()
+        if elsewhere:
+            raise HTTPException(status_code=409, detail=f"{prod['number'] if prod else ''} тепер лежить у {', '.join(elsewhere)} — спершу розберіться з цим")
+        _pack_rows(db, actor, box, prod, qty)
+        new_id = _event(db, actor, "pack", box=box, product=prod, qty=qty, details={"undo": True}, undo_of=e["id"])
+    elif kind in ("seal", "open", "check"):
+        if not box:
+            raise HTTPException(status_code=409, detail="Коробки вже немає")
+        if kind == "seal":
+            db.execute(text("UPDATE wh_boxes SET status = 'open', updated_at = now() WHERE id = :id"), {"id": box["id"]})
+            new_id = _event(db, actor, "open", box=box, details={"undo": True}, undo_of=e["id"])
+        elif kind == "open":
+            db.execute(text("UPDATE wh_boxes SET status = 'sealed', sealed_at = now(), updated_at = now() WHERE id = :id"), {"id": box["id"]})
+            new_id = _event(db, actor, "seal", box=box, details={"undo": True}, undo_of=e["id"])
+        else:
+            db.execute(text("UPDATE wh_boxes SET needs_check = TRUE, updated_at = now() WHERE id = :id"), {"id": box["id"]})
+            new_id = _event(db, actor, "box_edit", box=box, details={"needs_check": True, "undo": True}, undo_of=e["id"])
+    elif kind == "box_create":
+        if not box:
+            raise HTTPException(status_code=409, detail="Коробки вже немає")
+        n_open = db.execute(text("SELECT COUNT(*) FROM wh_box_items WHERE box_id = :b AND unpacked_at IS NULL"), {"b": box["id"]}).scalar() or 0
+        if n_open:
+            raise HTTPException(status_code=409, detail=f"У {box['code']} лежить {n_open} поз. — спершу вийміть")
+        db.execute(text("UPDATE wh_boxes SET status = 'archived', updated_at = now() WHERE id = :id"), {"id": box["id"]})
+        new_id = _event(db, actor, "box_delete", box=box, qty=0, details={"undo": True}, undo_of=e["id"])
+    elif kind == "box_delete":
+        if not box:
+            raise HTTPException(status_code=409, detail="Коробки вже немає")
+        if box["status"] != "archived":
+            raise HTTPException(status_code=409, detail=f"Коробка {box['code']} і так не видалена")
+        db.execute(text("UPDATE wh_boxes SET status = 'open', needs_check = TRUE, updated_at = now() WHERE id = :id"), {"id": box["id"]})
+        restored = 0
+        for it in details.get("items") or []:
+            p = _load_product(db, int(it["product_id"])) or {"id": int(it["product_id"]), "productnumber": it.get("productnumber"), "size": None, "color": None}
+            busy = db.execute(text("SELECT 1 FROM wh_box_items WHERE product_id = :pid AND unpacked_at IS NULL LIMIT 1"), {"pid": p["id"]}).first()
+            if busy:
+                continue      # уже лежить деінде — не дублюємо
+            _pack_rows(db, actor, box, p, int(it.get("qty") or 1)); restored += 1
+        new_id = _event(db, actor, "box_create", box=box, qty=restored,
+                        details={"undo": True, "restored_items": restored, "title": box.get("title")}, undo_of=e["id"])
+    elif kind == "box_edit":
+        if not box:
+            raise HTTPException(status_code=409, detail="Коробки вже немає")
+        prev = details.get("prev") or {}
+        if not prev:
+            raise HTTPException(status_code=409, detail="Для цієї правки не збережено попередні значення")
+        sets = ", ".join(f"{k} = :{k}" for k in prev)
+        db.execute(text(f"UPDATE wh_boxes SET {sets}, updated_at = now() WHERE id = :id"), {**prev, "id": box["id"]})
+        cur = {k: box.get(k) for k in prev}
+        new_id = _event(db, actor, "box_edit", box=box, details={**prev, "prev": cur, "undo": True}, undo_of=e["id"])
+    else:  # pragma: no cover
+        raise HTTPException(status_code=409, detail="Скасувати не можна")
+
+    db.execute(text("UPDATE wh_events SET undone_by = :u WHERE id = :id"), {"u": new_id, "id": e["id"]})
+    db.commit()
+    return {"ok": True, "undone": e["id"], "by_event": new_id}
 
 
 # ───────────────────────────── коробки: запис ────────────────────────────────
@@ -682,7 +856,8 @@ def box_patch(code: str, payload: BoxPatch = Body(...), db: Session = Depends(ge
     sets = ", ".join(f"{k} = :{k}" for k in changes)
     db.execute(text(f"UPDATE wh_boxes SET {sets}, updated_at = now() WHERE id = :id"),
                {**changes, "id": box["id"]})
-    _event(db, actor, "box_edit", box=box, details=changes)
+    # prev — щоб «Історія» могла відкотити правку.
+    _event(db, actor, "box_edit", box=box, details={**changes, "prev": {k: box.get(k) for k in changes}})
     db.commit()
     result = box_detail(code, db, actor)
     if payload.op_id:
@@ -766,15 +941,18 @@ def box_delete(code: str, force: bool = False, db: Session = Depends(get_db),
     box = _box_row(db, code, for_update=True)
     if not box:
         raise HTTPException(status_code=404, detail=f"Коробки {code} немає")
-    n_open = db.execute(text("SELECT COUNT(*) FROM wh_box_items WHERE box_id = :b AND unpacked_at IS NULL"),
-                        {"b": box["id"]}).scalar() or 0
+    open_items = db.execute(text("SELECT product_id, productnumber, qty FROM wh_box_items WHERE box_id = :b AND unpacked_at IS NULL"),
+                            {"b": box["id"]}).mappings().all()
+    n_open = len(open_items)
     if n_open and not force:
         raise HTTPException(status_code=409, detail=f"У коробці {box['code']} ще {n_open} позицій. Спершу розпакуйте або підтвердьте видалення з вмістом.")
     if n_open:
         db.execute(text("UPDATE wh_box_items SET unpacked_at = now(), unpacked_by = :by WHERE box_id = :b AND unpacked_at IS NULL"),
                    {"b": box["id"], "by": actor})
     db.execute(text("UPDATE wh_boxes SET status = 'archived', updated_at = now() WHERE id = :id"), {"id": box["id"]})
-    _event(db, actor, "box_delete", box=box, qty=int(n_open), details={"force": bool(force)})
+    # Вміст — у details: «Історія» відновлює коробку разом із ним.
+    _event(db, actor, "box_delete", box=box, qty=int(n_open),
+           details={"force": bool(force), "items": [{"product_id": int(r["product_id"]), "productnumber": r["productnumber"], "qty": int(r["qty"])} for r in open_items]})
     db.commit()
     return {"deleted": box["code"], "unpacked_items": int(n_open)}
 

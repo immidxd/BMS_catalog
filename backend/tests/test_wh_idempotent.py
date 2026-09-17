@@ -37,7 +37,7 @@ INSERT INTO products (id, productnumber, price, quantity, sizeeu) VALUES (5, '#�
 warehouse.ensure_warehouse_schema(db); db.close()
 
 app = FastAPI(); app.include_router(warehouse.router)
-app.dependency_overrides[warehouse.require_staff] = lambda: "test"
+app.dependency_overrides[warehouse.require_staff] = lambda: "bms"
 fake = {"id": 5, "productnumber": "#Ф1", "number": "Ф1", "size": "40", "color": "чорний", "available_qty": 1,
         "quantity": 1, "sold_count": 0, "price": 100, "oldprice": None, "brand": "X", "model": None, "type": None,
         "gender": None, "season": None, "condition": None, "insole": "", "image": None}
@@ -77,3 +77,57 @@ r = c.post("/api/wh/boxes/T2/pack", json={"product_id": 5, "qty": 1, "op_id": op
 r = c.post("/api/wh/boxes/T2/pack", json={"product_id": 5, "qty": 1, "move": True, "op_id": op}); assert r.status_code == 200, r.text
 assert qty("T2") == 1 and qty("T1") == 1
 print("ідемпотентність: OK")
+
+# ── Історія: скасувати / повернути ─────────────────────────────────────────
+def ev(**f):
+    d = database.SessionLocal()
+    try:
+        conds = " AND ".join(f"{k} = :{k}" for k in f) or "TRUE"
+        return [dict(r) for r in d.execute(text(f"SELECT id, kind, box_code, qty, undo_of, undone_by FROM wh_events WHERE {conds} ORDER BY id"), f).mappings().all()]
+    finally: d.close()
+
+c.post("/api/wh/boxes", json={"code": "H1", "category": "H"})
+c.post("/api/wh/boxes", json={"code": "H2", "category": "H"})
+# T1 має 1 шт товару 5 (з тесту вище), T2 — 1 шт → вийняти все з T1/T2, щоб почати чисто
+c.post("/api/wh/unpack", json={"product_id": 5})
+r = c.post("/api/wh/boxes/H1/pack", json={"product_id": 5, "qty": 1}); assert r.status_code == 200
+pack_ev = ev(kind="pack", box_code="H1")[-1]
+# список: подія недавня, undoable, не скасована
+lst = c.get("/api/wh/events?box=H1").json()["events"]; top = lst[0]
+assert top["id"] == pack_ev["id"] and top["undoable"] and not top["undone"]
+# скасувати pack → unpack-обернення; товар зник з H1
+r = c.post(f"/api/wh/events/{pack_ev['id']}/undo"); assert r.status_code == 200, r.text
+assert qty("H1") == 0
+lst = c.get("/api/wh/events?box=H1").json()["events"]
+orig = next(e for e in lst if e["id"] == pack_ev["id"]); assert orig["undone"] and not orig["undoable"]
+undo_ev = next(e for e in lst if e["undo_of"] == pack_ev["id"]); assert undo_ev["kind"] == "unpack"
+# повторне скасування того ж — відмова
+assert c.post(f"/api/wh/events/{pack_ev['id']}/undo").status_code == 409
+# повернути = скасувати обернення → товар знову в H1, оригінал більше не «скасований»
+r = c.post(f"/api/wh/events/{undo_ev['id']}/undo"); assert r.status_code == 200, r.text
+assert qty("H1") == 1
+lst = c.get("/api/wh/events?box=H1").json()["events"]
+orig = next(e for e in lst if e["id"] == pack_ev["id"]); assert not orig["undone"]
+# move: H1 → H2, скасувати → назад у H1
+r = c.post("/api/wh/boxes/H2/pack", json={"product_id": 5, "qty": 1, "move": True}); assert r.status_code == 200
+mv = ev(kind="move", box_code="H2")[-1]
+assert c.post(f"/api/wh/events/{mv['id']}/undo").status_code == 200
+assert qty("H1") == 1 and qty("H2") == 0
+# seal → undo → open
+c.post("/api/wh/boxes/H1/seal"); se = ev(kind="seal", box_code="H1")[-1]
+assert c.post(f"/api/wh/events/{se['id']}/undo").status_code == 200
+assert c.get("/api/wh/boxes/H1").json()["status"] == "open"
+# правка назви зберігає prev і відкочується
+c.patch("/api/wh/boxes/H1", json={"title": "Нова назва"}); ed = ev(kind="box_edit", box_code="H1")[-1]
+assert c.post(f"/api/wh/events/{ed['id']}/undo").status_code == 200
+assert c.get("/api/wh/boxes/H1").json()["title"] is None
+# видалення з вмістом → відновлення разом із вмістом
+r = c.delete("/api/wh/boxes/H1?force=true"); assert r.status_code == 200
+de = ev(kind="box_delete", box_code="H1")[-1]
+assert qty("H1") == 0
+assert c.post(f"/api/wh/events/{de['id']}/undo").status_code == 200
+b = c.get("/api/wh/boxes/H1").json(); assert b["status"] == "open" and b["needs_check"] and qty("H1") == 1
+# не-модератор не може
+app.dependency_overrides[warehouse.require_staff] = lambda: "tg:999 Працівник"
+assert c.post(f"/api/wh/events/{pack_ev['id']}/undo").status_code == 403
+print("історія: OK")

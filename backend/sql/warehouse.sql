@@ -116,3 +116,11 @@ CREATE TABLE IF NOT EXISTS wh_client_ops (
     result     JSONB,                                -- NULL = ще виконується
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Історія з відкатом (17.09.2026). Скасування — це НОВА подія-обернення
+-- (звичайного роду: unpack для pack, open для seal …) з посиланням undo_of на
+-- оригінал; оригінал отримує undone_by. «Повернути» = скасувати подію-
+-- обернення. Нічого не видаляється — журнал лишається повним.
+ALTER TABLE wh_events ADD COLUMN IF NOT EXISTS undo_of   BIGINT;
+ALTER TABLE wh_events ADD COLUMN IF NOT EXISTS undone_by BIGINT;
+CREATE INDEX IF NOT EXISTS ix_wh_events_at ON wh_events (at DESC, id DESC);

@@ -195,3 +195,4 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; border: 0; b
 [data-theme="dark"] .wh-netbar.warn { background: #3a2a10; color: #fbbf24; }
 [data-theme="dark"] .wh-netbar.err { background: #3a1a1a; color: #fca5a5; }
 .wh-netbar + .wh-header { margin-top: 0; padding-top: 10px; }
+.wh-iconbtn.off { opacity: .45; }
