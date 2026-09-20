@@ -59,8 +59,12 @@ r = c.post("/api/wh/boxes/T1/pack", json={"product_id": 5, "qty": 2, "op_id": op
 assert qty("T1") == 2
 r = c.post("/api/wh/boxes/T1/pack", json={"product_id": 5, "qty": 2, "op_id": op}); assert r.status_code == 200 and r.json()["ok"]
 assert qty("T1") == 2, qty("T1")          # повтор НЕ подвоїв
-r = c.post("/api/wh/boxes/T1/pack", json={"product_id": 5, "qty": 1}); assert r.status_code == 200
-assert qty("T1") == 3                      # без op_id — звичайне додавання
+# Товар уже в цій коробці: повторний скан (без add) — 409 already, qty не росте;
+# свідоме «докласти ще» (add) — звичайне додавання.
+r = c.post("/api/wh/boxes/T1/pack", json={"product_id": 5, "qty": 1}); assert r.status_code == 409 and r.json()["detail"]["code"] == "already", r.text
+assert qty("T1") == 2, qty("T1")
+r = c.post("/api/wh/boxes/T1/pack", json={"product_id": 5, "qty": 1, "add": True}); assert r.status_code == 200, r.text
+assert qty("T1") == 3
 
 op = str(uuid.uuid4())
 r = c.post("/api/wh/boxes/T1/unpack", json={"product_id": 5, "qty": 1, "op_id": op}); assert r.status_code == 200

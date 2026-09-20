@@ -140,9 +140,9 @@ export const api = {
   check: (code: string, opId?: string) => req<Box>('POST', `/api/wh/boxes/${encodeURIComponent(code)}/check${opId ? `?${q({ op_id: opId })}` : ''}`),
   deleteBox: (code: string, force = false) =>
     req<{ deleted: string; unpacked_items: number }>('DELETE', `/api/wh/boxes/${encodeURIComponent(code)}${force ? '?force=true' : ''}`),
-  pack: (code: string, product_id: number, qty = 1, move = false, opId?: string) =>
+  pack: (code: string, product_id: number, qty = 1, move = false, opId?: string, add = false) =>
     req<{ ok: boolean; box: string; product: Product; moved_from: string[]; warning: string | null }>(
-      'POST', `/api/wh/boxes/${encodeURIComponent(code)}/pack`, { product_id, qty, move, op_id: opId }),
+      'POST', `/api/wh/boxes/${encodeURIComponent(code)}/pack`, { product_id, qty, move, add, op_id: opId }),
   unpackFrom: (code: string, product_id: number, qty?: number, opId?: string) =>
     req<{ ok: boolean }>('POST', `/api/wh/boxes/${encodeURIComponent(code)}/unpack`, { product_id, qty: qty ?? null, op_id: opId }),
   unpack: (product_id: number, qty?: number, opId?: string) =>

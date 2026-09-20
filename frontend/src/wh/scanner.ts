@@ -1,11 +1,9 @@
 // Сканер QR: нативний попап Telegram (showScanQrPopup, Bot API 6.4+).
 // Поза Telegram (розробка в браузері) — просте вікно вводу коду.
 //
-// Режими:
-//   scanOnce()          — один код, попап закривається сам;
-//   scanMany(onCode)    — попап лишається відкритим, кожен новий код → onCode;
-//                         той самий код у межах 2.5 с ігнорується (Telegram
-//                         сипле подіями, доки камера дивиться на QR).
+// Лише режим «один скан»: попап перекриває сторінку цілком, тож серія сканів
+// у ньому лишала б людину без жодного зворотного звʼязку. Серію робить
+// екран сесії пакування: скан → картка результату → знову камера.
 import { tg, isInTelegram } from '../telegram';
 
 type ScanQr = {
@@ -35,9 +33,16 @@ export const haptic = {
 
 export function confirmDialog(message: string): Promise<boolean> {
   return new Promise(resolve => {
-    if (app?.showConfirm) app.showConfirm(message, ok => resolve(Boolean(ok)));
+    const native = isInTelegram && app?.showConfirm && (!app.isVersionAtLeast || app.isVersionAtLeast('6.2'));
+    if (native) app!.showConfirm!(message, ok => resolve(Boolean(ok)));
     else resolve(window.confirm(message));
   });
+}
+
+/** Закрити попап сканера, якщо він є (клієнт без підтримки — тихо нічого). */
+export function closeScan(): void {
+  if (!canScan()) return;
+  try { app!.closeScanQrPopup?.(); } catch { /* немає попапу або метод не підтримується */ }
 }
 
 /** Один скан. null — людина закрила попап. */
@@ -48,10 +53,16 @@ export function scanOnce(hint = 'Наведіть на QR стікера або 
   }
   return new Promise(resolve => {
     let done = false;
-    const onClosed = () => { if (!done) { done = true; resolve(null); } tg?.onEvent && offClosed(); };
+    const openedAt = Date.now();
     const offClosed = () => { (tg as any).offEvent?.('scanQrPopupClosed', onClosed); };
+    const onClosed = () => {
+      // Подія «закрито» від ПОПЕРЕДНЬОГО попапу може прилетіти вже після
+      // відкриття наступного — людина фізично не закриє новий за 300 мс.
+      if (done || Date.now() - openedAt < 300) return;
+      done = true; offClosed(); resolve(null);
+    };
     (tg as any).onEvent?.('scanQrPopupClosed', onClosed);
-    app!.showScanQrPopup!({ text: hint }, (text: string) => {
+    app!.showScanQrPopup!({ text: hint.slice(0, 64) }, (text: string) => {
       if (done) return true;
       done = true;
       offClosed();
@@ -59,43 +70,4 @@ export function scanOnce(hint = 'Наведіть на QR стікера або 
       return true; // закрити попап
     });
   });
-}
-
-/**
- * Серія сканів (сесія коробки). onCode повертає true, щоб зупинити серію.
- * Повертає функцію примусової зупинки.
- */
-export function scanMany(hint: string, onCode: (code: string) => Promise<boolean | void> | boolean | void,
-                         onClosed?: () => void): () => void {
-  if (!canScan()) {
-    // Розробка: цикл prompt-ів, порожній ввід = стоп.
-    void (async () => {
-      for (;;) {
-        const v = window.prompt(`${hint}\n(порожньо — завершити)`);
-        if (!v) break;
-        if (await onCode(v.trim())) break;
-      }
-      onClosed?.();
-    })();
-    return () => {};
-  }
-  let last = '';
-  let lastAt = 0;
-  let stopped = false;
-  let busy = false;
-  const closed = () => { if (!stopped) { stopped = true; onClosed?.(); } (tg as any).offEvent?.('scanQrPopupClosed', closed); };
-  (tg as any).onEvent?.('scanQrPopupClosed', closed);
-  app!.showScanQrPopup!({ text: hint }, (text: string) => {
-    if (stopped) return true;
-    const code = (text || '').trim();
-    const now = Date.now();
-    if (!code || busy || (code === last && now - lastAt < 2500)) return false;
-    last = code; lastAt = now; busy = true;
-    Promise.resolve(onCode(code)).then(stop => {
-      busy = false;
-      if (stop) { stopped = true; app!.closeScanQrPopup?.(); }
-    }).catch(() => { busy = false; });
-    return false; // не закривати — наступний скан
-  });
-  return () => { stopped = true; app!.closeScanQrPopup?.(); };
 }

@@ -196,3 +196,17 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; border: 0; b
 [data-theme="dark"] .wh-netbar.err { background: #3a1a1a; color: #fca5a5; }
 .wh-netbar + .wh-header { margin-top: 0; padding-top: 10px; }
 .wh-iconbtn.off { opacity: .45; }
+
+/* Сесія пакування: картка результату між сканами (попап камери закритий) */
+.wh-flash { position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; color: #fff; animation: wh-fade var(--dur-fast, .12s) var(--ease, ease); pointer-events: none; }
+.wh-flash.ok { background: #16a34a; }
+.wh-flash.warn { background: #f59e0b; color: #1a1a1a; }
+.wh-flash.err { background: var(--danger); }
+.wh-flash-ico { width: 96px; height: 96px; border-radius: 50%; background: rgba(255,255,255,.22); display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
+.wh-flash-title { font-size: 40px; font-weight: 900; letter-spacing: -.02em; line-height: 1.1; word-break: break-word; }
+.wh-flash-sub { font-size: 22px; font-weight: 700; opacity: .9; }
+.wh-event.ok .wh-event-ico { color: #16a34a; }
+.wh-event.warn .wh-event-ico { background: #fff4e0; color: #9a3d00; }
+.wh-event.err .wh-event-ico { background: #fdecec; color: #b3261e; }
+[data-theme="dark"] .wh-event.warn .wh-event-ico { background: #3a2a10; color: #fbbf24; }
+[data-theme="dark"] .wh-event.err .wh-event-ico { background: #3a1a1a; color: #fca5a5; }

@@ -198,7 +198,7 @@ export function enqueue(kind: OpKind, args: Record<string, any>, label: string):
 async function execute(op: Op): Promise<void> {
   const a = op.args;
   switch (op.kind) {
-    case 'pack': await api.pack(a.code, a.product.id, a.qty, !!a.move, op.id); return;
+    case 'pack': await api.pack(a.code, a.product.id, a.qty, !!a.move, op.id, !!a.add); return;
     case 'unpackFrom': await api.unpackFrom(a.code, a.product_id, a.qty ?? undefined, op.id); return;
     case 'unpack': await api.unpack(a.product_id, a.qty ?? undefined, op.id); return;
     case 'createBox': await api.createBox({ code: a.code, category: a.category, title: a.title, location: a.location }, op.id); return;

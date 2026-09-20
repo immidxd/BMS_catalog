@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, ApiError, hasAuth, isNetworkError, type Box, type Condition, type Product, type ScanResult, type WhEvent, type WhoAmI } from './api';
 import { cached, discard, enqueue, noteOnline, onSynced, parseCodeOffline, remember, retry, runOrQueue, setOnline, useOffline, type Op } from './offline';
-import { canScan, confirmDialog, haptic, scanMany, scanOnce } from './scanner';
+import { canScan, closeScan, confirmDialog, haptic, scanOnce } from './scanner';
 import { buzz, sound } from './sound';
 import { tg, isInTelegram } from '../telegram';
 import {
@@ -232,15 +232,17 @@ export function App() {
     finally { setBusy(false); }
   }, [openScan, toast, off.online]);
 
-  const packInto = useCallback(async (box: Box | string, product: Product, qty: number): Promise<Product | null> => {
+  // add — свідомо докласти ще одиницю в коробку, де товар уже лежить (картка з
+  // кількістю). Скан-сесія його не передає: повторний скан → 409 already.
+  const packInto = useCallback(async (box: Box | string, product: Product, qty: number, add = false): Promise<Product | null> => {
     const code = typeof box === 'string' ? box : box.code;
     const queueIt = (move: boolean) => {
-      enqueue('pack', { code, product, qty, move }, `${product.number} → ${code}${move ? ' (перенести)' : ''}`);
+      enqueue('pack', { code, product, qty, move, add }, `${product.number} → ${code}${move ? ' (перенести)' : ''}`);
       toast('warn', QUEUED);
       return cached.product(product.id) || product;
     };
     try {
-      const r = await api.pack(code, product.id, qty);
+      const r = await api.pack(code, product.id, qty, false, undefined, add);
       noteOnline();
       remember.product(r.product);
       toast('ok', r.moved_from.length ? `${product.number} → ${code} (з ${r.moved_from.join(', ')})` : `${product.number} → ${code}`);
@@ -263,7 +265,7 @@ export function App() {
         haptic.warn();
         if (!(await confirmDialog(`${d.message}. Перенести в ${code}?`))) return null;
         try {
-          const r = await api.pack(code, product.id, qty, true);
+          const r = await api.pack(code, product.id, qty, true, undefined, add);
           remember.product(r.product);
           toast('ok', `${product.number}: ${r.moved_from.join(', ')} → ${code}`);
           return r.product;
@@ -271,6 +273,10 @@ export function App() {
           if (isNetworkError(e2)) { setOnline(false); return queueIt(true); }
           toast('err', errText(e2, 'Не вдалося перенести')); return null;
         }
+      }
+      if (e instanceof ApiError && e.status === 409 && (e.detail as any)?.code === 'already') {
+        haptic.warn(); toast('warn', (e.detail as { message: string }).message);
+        return null;
       }
       toast('err', errText(e, 'Не вдалося запакувати'));
       return null;
@@ -360,23 +366,44 @@ export function App() {
     finally { setBusy(false); }
   }, [push, toast, loadBox]);
 
+  // Перечитати те, що на екрані. Стек тримає ЗНІМКИ картки/коробки, і після
+  // дій на верхньому екрані (спакували в сесії, переклали з картки) нижній
+  // знімок застаріває. Старе лишається видимим, поки не прийде свіже; якщо
+  // людина тим часом пішла далі — свіже не підміняє чужий екран.
+  const revalidateTop = useCallback(async () => {
+    const v = stack[stack.length - 1];
+    try {
+      if (v.name === 'product') {
+        const product = await loadProduct(v.product.id);
+        setStack(s => { const t = s[s.length - 1]; return t.name === 'product' && t.product.id === product.id ? [...s.slice(0, -1), { name: 'product', product }] : s; });
+      } else if (v.name === 'box' || v.name === 'session') {
+        const box = await loadBox(v.box.code);
+        setStack(s => { const t = s[s.length - 1]; return t.name === v.name && t.box.code === box.code ? [...s.slice(0, -1), { name: v.name, box } as View] : s; });
+      } else setReloadKey(k => k + 1);
+    } catch { /* тихо: лишається знімок */ }
+  }, [stack, loadProduct, loadBox]);
+
+  // Повернення назад (× на екрані або кнопка «Назад» Telegram) відкриває
+  // нижній знімок — одразу перечитуємо його.
+  const depthRef = useRef(stack.length);
+  useEffect(() => {
+    const shallower = stack.length < depthRef.current;
+    depthRef.current = stack.length;
+    if (shallower) void revalidateTop();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stack.length]);
+
   // Черга досинхронізувалась — перечитати те, що на екрані, зі свіжого сервера.
   useEffect(() => onSynced(async (done) => {
     toast('ok', done.length === 1 ? 'Дію з черги виконано' : `Виконано дій з черги: ${done.length}`);
-    const v = stack[stack.length - 1];
-    try {
-      if (v.name === 'product') replace({ name: 'product', product: await api.product(v.product.id) });
-      else if (v.name === 'box' || v.name === 'session') replace({ name: v.name, box: await api.box(v.box.code) } as View);
-      else setReloadKey(k => k + 1);
-    } catch { /* тихо */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [stack, replace, toast]);
+    await revalidateTop();
+  }), [revalidateTop, toast]);
 
   // Після вибору коробки зі списку / створення нової для конкретного товару —
   // пакуємо і повертаємось на картку товару з оновленими даними.
   const packFromPicker = useCallback(async (box: Box, pick: { product: Product; qty: number }) => {
     setBusy(true);
-    const p = await packInto(box, pick.product, pick.qty);
+    const p = await packInto(box, pick.product, pick.qty, true);
     setBusy(false);
     setStack(s => {
       const i = s.map(v => v.name).lastIndexOf('product');
@@ -404,7 +431,7 @@ export function App() {
             if (code === null) return;
             const parsed = code.startsWith('bms:b:') ? code.slice(6).toUpperCase() : code.toUpperCase();
             setBusy(true);
-            const p = await packInto(parsed, view.product, qty);
+            const p = await packInto(parsed, view.product, qty, true);
             setBusy(false);
             if (p) replace({ name: 'product', product: p });
           }}
@@ -444,7 +471,7 @@ export function App() {
       )}
       {view.name === 'session' && (
         <SessionScreen box={view.box} packInto={packInto} toast={toast} scanResolve={scanResolve}
-          onDone={async () => { back(); await refreshBox(view.box.code); }} />
+          onDone={back} />
       )}
 
       <div className="wh-toasts">
@@ -937,24 +964,59 @@ function BoxScreen({ box, busy, setBusy, toast, onRefresh, onSession, onDeleted,
 
 /* ───────────────────────────── Сесія пакування ───────────────────────────── */
 
+type Outcome = { kind: 'ok' | 'warn' | 'err'; title: string; sub: string; more?: Product };  // more — ростовка: можна свідомо докласти ще
+
 function SessionScreen({ box, packInto, toast, onDone, scanResolve }: {
-  box: Box; packInto: (box: Box, p: Product, qty: number) => Promise<Product | null>;
+  box: Box; packInto: (box: Box, p: Product, qty: number, add?: boolean) => Promise<Product | null>;
   toast: (k: Toast['kind'], t: string) => void; onDone: () => void;
   scanResolve: (code: string) => Promise<ScanResult>;
 }) {
-  const [log, setLog] = useState<{ number: string; size: string; qty: number }[]>([]);
+  const [log, setLog] = useState<(Outcome & { id: number })[]>([]);
   const [scanning, setScanning] = useState(false);
-  const stopRef = useRef<() => void>(() => {});
-  const total = useMemo(() => log.reduce((s, l) => s + l.qty, 0), [log]);
+  // Картка результату між сканами: попап Telegram перекриває сторінку, тож
+  // показати «покладено / вже є / продано» можна лише коли він закритий.
+  const [flash, setFlash] = useState<Outcome | null>(null);
+  const loopRef = useRef(false);
+  const packedRef = useRef(new Set<number>());
+  const total = useMemo(() => log.filter(l => l.kind === 'ok').length, [log]);
+  const lastRef = useRef('');
   // Без стікера (лише бірка з номером): пошук за номером → вибір розміру → у коробку.
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<Product[] | null>(null);
   const [searching, setSearching] = useState(false);
 
-  const packProduct = async (p: Product) => {
-    if (p.available_qty <= 0) { toast('warn', `${p.number} ПРОДАНО — не кладу`); return; }
+  // Єдиний шлях «товар → коробка» для скану й ручного вводу. Той самий товар
+  // удруге (у цій сесії або вже в цій коробці за даними сервера/копії) —
+  // не кладемо: повторний «пік» стікера не має робити qty+1.
+  const place = async (p: Product): Promise<Outcome> => {
+    const title = `${p.number} · ${p.size || '—'}`;
+    if (packedRef.current.has(p.id) || p.locations.some(l => l.box_code === box.code)) {
+      return { kind: 'warn', title, sub: `вже в ${box.code} — не додаю`, more: p.available_qty > 1 ? p : undefined };
+    }
+    if (p.available_qty <= 0) return { kind: 'warn', title, sub: 'ПРОДАНО — не кладу' };
     const done = await packInto(box, p, 1);
-    if (done) { setLog(l => [{ number: p.number, size: p.size, qty: 1 }, ...l]); setHits(null); setQ(''); }
+    if (!done) return { kind: 'err', title, sub: 'не покладено' };
+    packedRef.current.add(p.id);
+    return { kind: 'ok', title, sub: `${packedRef.current.size} в коробці` };
+  };
+  const report = (o: Outcome) => {
+    if (o.kind === 'ok') { buzz.ok(); sound.ok(); } else if (o.kind === 'warn') { buzz.warn(); sound.warn(); } else { buzz.err(); sound.err(); }
+    setLog(l => [{ ...o, sub: o.kind === 'ok' ? '' : o.sub, id: Date.now() }, ...l]);   // «N в коробці» у журналі зайве
+    if (o.kind === 'ok') lastRef.current = o.title;
+    setFlash(o);
+  };
+
+  const packProduct = async (p: Product) => {
+    setHits(null); setQ('');
+    const o = await place(p);
+    report(o);
+    setTimeout(() => setFlash(f => (f === o ? null : f)), o.kind === 'ok' ? 900 : 1600);
+  };
+  // Ростовка: ще одну одиницю того ж товару в ту ж коробку — лише свідомо.
+  const addMore = async (id: number, p: Product) => {
+    setLog(l => l.map(x => (x.id === id ? { ...x, more: undefined } : x)));
+    const done = await packInto(box, p, 1, true);
+    if (done) { buzz.ok(); sound.ok(); setLog(l => [{ kind: 'ok', title: `${p.number} · ${p.size || '—'}`, sub: 'докладено ще', id: Date.now() }, ...l]); }
   };
 
   const searchByNumber = async () => {
@@ -972,23 +1034,39 @@ function SessionScreen({ box, packInto, toast, onDone, scanResolve }: {
     finally { setSearching(false); }
   };
 
-  const start = () => {
-    setScanning(true);
-    stopRef.current = scanMany(`Пакую в ${box.code} · скануйте товари поспіль`, async (code) => {
-      try {
-        const r = await scanResolve(code);
-        buzz.scan(); sound.scan();
-        if (r.kind === 'box') { toast('warn', `Це коробка ${r.box.code}, а не товар`); return false; }
-        const p = r.kind === 'product' ? r.product : (r.products.length === 1 ? r.products[0] : null);
-        if (!p) { toast('warn', 'Кілька розмірів з таким номером — відкрийте товар окремо'); return false; }
-        if (p.available_qty <= 0) { toast('warn', `${p.number} ПРОДАНО — не кладу`); return false; }
-        const done = await packInto(box, p, 1);
-        if (done) setLog(l => [{ number: p.number, size: p.size, qty: 1 }, ...l]);
-      } catch (e) { toast('err', isNetworkError(e) ? 'Немає мережі, і цього коду ще нема в копії' : errText(e, 'Не впізнав код')); }
-      return false;
-    }, () => setScanning(false));
+  const handleCode = async (code: string): Promise<Outcome> => {
+    try {
+      const r = await scanResolve(code);
+      if (r.kind === 'box') return { kind: 'warn', title: `Коробка ${r.box.code}`, sub: 'це не товар' };
+      if (r.kind === 'products' && r.products.length !== 1) return { kind: 'warn', title: r.products[0]?.number || code, sub: 'кілька розмірів — відкрийте товар окремо' };
+      return place(r.kind === 'product' ? r.product : r.products[0]);
+    } catch (e) {
+      return { kind: 'err', title: 'Не впізнав код', sub: isNetworkError(e) ? 'немає мережі, і коду ще нема в копії' : errText(e, '') };
+    }
   };
-  useEffect(() => () => stopRef.current(), []);
+
+  // Серія: камера → скан → картка результату (0,9 с; попередження — 1,6 с) → знову камера.
+  // Зупинка — людина закрила попап або натиснула ×.
+  const start = async () => {
+    if (loopRef.current) return;
+    loopRef.current = true; setScanning(true);
+    try {
+      while (loopRef.current) {
+        const n = packedRef.current.size;
+        const hint = n ? `${box.code} · покладено ${n} · ост. ${lastRef.current}` : `Пакую в ${box.code} · наведіть на стікер`;
+        const code = await scanOnce(hint);
+        if (code === null || !loopRef.current) break;
+        buzz.scan(); sound.scan();
+        const o = await handleCode(code);
+        if (!loopRef.current) break;
+        report(o);
+        await new Promise(r => setTimeout(r, o.kind === 'ok' ? 900 : 1600));
+        setFlash(null);
+      }
+    } finally { loopRef.current = false; setScanning(false); setFlash(null); }
+  };
+  const stop = () => { loopRef.current = false; closeScan(); };
+  useEffect(() => stop, []);
 
   return (
     <>
@@ -1022,19 +1100,27 @@ function SessionScreen({ box, packInto, toast, onDone, scanResolve }: {
         )}
         {log.length > 0 && (
           <div className="wh-card flush"><div className="wh-list">
-            {log.map((l, i) => (
-              <div key={i} className="wh-event">
-                <span className="wh-event-ico"><ICheck size={20} /></span>
-                <span className="wh-event-main"><span className="wh-event-title">{l.number} · {l.size}</span></span>
+            {log.map(l => (
+              <div key={l.id} className={`wh-event ${l.kind}`}>
+                <span className="wh-event-ico">{l.kind === 'ok' ? <ICheck size={20} /> : <IAlert size={20} />}</span>
+                <span className="wh-event-main"><span className="wh-event-title">{l.title}</span>{l.sub && <span className="wh-event-sub">{l.sub}</span>}</span>
+                {l.more && <button className="wh-btn sm" onClick={() => void addMore(l.id, l.more!)} title="Докласти ще одну одиницю">+1</button>}
               </div>
             ))}
           </div></div>
         )}
-        {log.length === 0 && !hits && <div className="wh-hint">«Сканувати» — наводьте камеру на стікери по черзі, камера не закривається між сканами. Без стікера — введіть номер з бірки вище.</div>}
+        {log.length === 0 && !hits && <div className="wh-hint">«Сканувати» — наводьте камеру на стікери по черзі: після кожного скану на секунду зʼявиться картка «покладено», і камера відкриється знову. Той самий стікер удруге не додається. Без стікера — введіть номер з бірки вище.</div>}
       </div>
+      {flash && (
+        <div className={`wh-flash ${flash.kind}`}>
+          <span className="wh-flash-ico">{flash.kind === 'ok' ? <ICheck size={56} /> : <IAlert size={56} />}</span>
+          <div className="wh-flash-title">{flash.title}</div>
+          <div className="wh-flash-sub">{flash.sub}</div>
+        </div>
+      )}
       <Bar>
-        <button className="wh-btn narrow" onClick={() => { stopRef.current(); onDone(); }} title="Завершити"><IX size={28} /></button>
-        <button className="wh-btn primary huge" onClick={start} disabled={scanning}><IScan size={28} /> {scanning ? 'Сканую…' : log.length ? 'Сканувати ще' : 'Сканувати'}</button>
+        <button className="wh-btn narrow" onClick={() => { stop(); onDone(); }} title="Завершити"><IX size={28} /></button>
+        <button className="wh-btn primary huge" onClick={() => void start()} disabled={scanning}><IScan size={28} /> {scanning ? 'Сканую…' : log.length ? 'Сканувати ще' : 'Сканувати'}</button>
       </Bar>
     </>
   );

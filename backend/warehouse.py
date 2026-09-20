@@ -469,6 +469,7 @@ class PackIn(BaseModel):
     product_id: int
     qty: int = Field(1, ge=1, le=99)
     move: bool = False                    # уже лежить в іншій коробці → перенести
+    add: bool = False                     # уже лежить у ЦІЙ коробці → докласти ще (явна дія з картки; скан — ні)
     op_id: Optional[str] = None
 
 
@@ -1274,6 +1275,16 @@ def pack(code: str, payload: PackIn = Body(...), db: Session = Depends(get_db),
     if not prod:
         raise HTTPException(status_code=404, detail="Товар не знайдено")
     qty = int(payload.qty)
+
+    # Повторний скан того ж стікера в ту ж коробку — не «+1», а відмова:
+    # докласти ще одну одиницю можна лише свідомо (картка → кількість → add).
+    here = db.execute(text("SELECT qty FROM wh_box_items WHERE box_id = :b AND product_id = :pid AND unpacked_at IS NULL"),
+                      {"b": box["id"], "pid": prod["id"]}).scalar()
+    if here and not payload.add:
+        raise HTTPException(status_code=409, detail={
+            "code": "already", "qty": int(here),
+            "message": f"{prod['number']} уже лежить у {box['code']}" + (f" (×{int(here)})" if int(here) > 1 else ""),
+        })
 
     elsewhere = db.execute(text("""
         SELECT i.id, i.qty, b.code FROM wh_box_items i JOIN wh_boxes b ON b.id = i.box_id
