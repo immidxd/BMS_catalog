@@ -122,15 +122,21 @@ export const App = () => {
     fetchFilters(isAdmin).then(setFilterOptions).catch(() => {});
   }, [isAdmin]);
 
-  // «Живі» перегляди в адмін-режимі: полінг мапи {номер: перегляди} кожні 20с
+  // «Живі» перегляди в адмін-режимі: полінг мапи {номер: перегляди} кожні 60с
   // (бейджі оновлюються без рефетчу сітки). Публіці не запитуємо.
+  // Ліміт Neon (CLAUDE.md): у фоні/згорнутому застосунку НЕ опитуємо — інакше
+  // забутий відкритим адмін-режим не дає хмарній БД заснути.
   useEffect(() => {
     if (!isAdmin) return;
     let stop = false;
-    const tick = () => fetchViews().then((m) => { if (!stop) setViewsMap(m); }).catch(() => {});
+    const tick = () => {
+      if (document.hidden) return;
+      fetchViews().then((m) => { if (!stop) setViewsMap(m); }).catch(() => {});
+    };
     tick();
-    const t = setInterval(tick, 20000);
-    return () => { stop = true; clearInterval(t); };
+    const t = setInterval(tick, 60000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { stop = true; clearInterval(t); document.removeEventListener('visibilitychange', tick); };
   }, [isAdmin]);
 
   useEffect(() => {

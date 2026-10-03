@@ -15,7 +15,9 @@
 Щогодинний автозапуск — через launchd (див. cloud/com.bms.catalog.sync.plist).
 """
 import fcntl
+import hashlib
 import io
+import json
 import os
 import sys
 import time
@@ -39,6 +41,67 @@ LOCK_PATH = os.getenv("CATALOG_SYNC_LOCK", "/tmp/bms_catalog_sync.lock")
 LOCAL_IDLE_TX_TIMEOUT = os.getenv("CATALOG_SYNC_IDLE_TX_TIMEOUT", "2min")
 LOCAL_LOCK_TIMEOUT = os.getenv("CATALOG_SYNC_LOCK_TIMEOUT", "3s")
 LOCAL_STATEMENT_TIMEOUT = os.getenv("CATALOG_SYNC_STATEMENT_TIMEOUT", "10min")
+
+
+# ── Безкоштовний ліміт Neon (ЖОРСТКЕ ПРАВИЛО, див. CLAUDE.md) ─────────────────
+# Кожен запуск будить хмарний compute щонайменше на ~6 хв (робота + 5 хв до сну).
+# Тому: (1) якщо каталожний зріз у локальній БД НЕ змінився з минулого успішного
+# синку — до хмари взагалі не підключаємось (відбиток рахуємо по ЛОКАЛЬНІЙ БД);
+# раз на CATALOG_SYNC_MAX_AGE_SEC все одно синкаємо — щоб повернути в BMS
+# тумблери з Mini App і аналітику; (2) якщо BMS-лічильник бюджету Neon каже
+# «stop» — не будимо хмару зовсім (окрім ручного --force).
+STATE_PATH = os.getenv("CATALOG_SYNC_STATE", os.path.expanduser("~/.bms_catalog_sync_state.json"))
+MAX_AGE_SEC = float(os.getenv("CATALOG_SYNC_MAX_AGE_SEC", "21600") or 21600)
+BUDGET_STATE = os.getenv("CLOUD_BUDGET_STATE", os.path.expanduser("~/.bms/cloud_budget.json"))
+
+
+def _read_json(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh) or {}
+    except Exception:  # noqa: BLE001 — нема файлу / битий — як «нічого не відомо»
+        return {}
+
+
+def _budget_level() -> str:
+    """Рівень бюджету Neon від BMS (ok/warn/economy/stop/unknown); старіше 2 діб — unknown."""
+    st = _read_json(BUDGET_STATE)
+    if time.time() - float(st.get("updated_at") or 0) > 2 * 86400:
+        return "unknown"
+    return str(st.get("level") or "unknown")
+
+
+def _local_fingerprint(lc):
+    """Відбиток усього, що синк везе в хмару, — ЛИШЕ з локальної БД (Neon не будимо).
+    None — порахувати не вдалось (тоді синкаємо як завжди)."""
+    parts = []
+    tables = list(TABLES.items()) + [("catalog_listings", None), ("product_photo_hidden", None)]
+    try:
+        for table, want in tables + [("photo_r2_index", None)]:
+            names, _ = _columns(lc, table, want)
+            if not names:
+                if table == "photo_r2_index":
+                    return None   # фото тоді скануються з диска — відбитком не покрито
+                parts.append(f"{table}:-")
+                continue
+            collist = ", ".join(f'"{n}"' for n in names)
+            lc.execute(f'SELECT count(*), COALESCE(SUM(hashtext(t::text)::bigint), 0) '
+                       f'FROM (SELECT {collist} FROM "{table}") t')
+            cnt, h = lc.fetchone()
+            parts.append(f"{table}:{cnt}:{h}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  · відбиток не пораховано ({exc.__class__.__name__}) — синкаю повністю")
+        lc.connection.rollback()
+        return None
+    return hashlib.md5("|".join(parts).encode()).hexdigest()
+
+
+def _save_state(fingerprint) -> None:
+    try:
+        with open(STATE_PATH, "w", encoding="utf-8") as fh:
+            json.dump({"fingerprint": fingerprint, "synced_at": time.time()}, fh)
+    except OSError as exc:
+        print(f"  ⚠ стан синку не збережено: {exc}")
 
 
 def _acquire_single_instance_lock():
@@ -251,6 +314,25 @@ def main():
     _lc0.execute(f"SET lock_timeout = '{LOCAL_LOCK_TIMEOUT}'")
     local.commit()
     _lc0.close()
+
+    force = "--force" in sys.argv or os.getenv("CATALOG_SYNC_FORCE") == "1"
+    level = _budget_level()
+    if level == "stop" and not force:
+        print("⛔ Бюджет Neon вичерпується (BMS: рівень stop) — хмару не будимо. "
+              "Ручний запуск: sync_to_cloud.py --force")
+        local.close()
+        return
+    lc = local.cursor()
+    fingerprint = _local_fingerprint(lc)
+    prev = _read_json(STATE_PATH)
+    max_age = MAX_AGE_SEC * (2 if level == "economy" else 1)
+    age = time.time() - float(prev.get("synced_at") or 0)
+    if not force and fingerprint and prev.get("fingerprint") == fingerprint and age < max_age:
+        print(f"↷ Каталожні дані не змінились (останній синк {age / 60:.0f} хв тому) — "
+              "хмару не будимо.")
+        local.close()
+        return
+    local.rollback()   # відбиток рахувався в окремій читальній транзакції
     # Хмара через мережу: без keepalive обрив каналу вішає скрипт на години
     # (саме так і сталося) — тримаємо TCP-перевірку живості й ліміт на конект.
     cloud = psycopg2.connect(
@@ -258,7 +340,7 @@ def main():
         connect_timeout=int(os.getenv("CATALOG_SYNC_CONNECT_TIMEOUT", "15")),
         keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3,
     )
-    lc, cc = local.cursor(), cloud.cursor()
+    cc = cloud.cursor()
 
     cc.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
     cc.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")       # оператор % (латинський fuzzy)
@@ -369,6 +451,7 @@ def main():
         print(f"  ✓ catalog analytics: {result}")
     except Exception as exc:
         print(f"  ⚠ catalog analytics pull skipped: {exc}")
+    _save_state(fingerprint)
     print(f"✓ Синхрон завершено за {time.time() - t0:.1f}с")
 
 
