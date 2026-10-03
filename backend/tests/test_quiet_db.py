@@ -36,7 +36,10 @@ CREATE TABLE IF NOT EXISTS products (id INT PRIMARY KEY, productnumber TEXT, mod
 INSERT INTO products (id, productnumber, price, quantity, sizeeu) VALUES (5, '#Ф1', 100, 1, '40') ON CONFLICT DO NOTHING;
 """)); db.commit()
 warehouse.ensure_warehouse_schema(db)
-db.execute(text("DELETE FROM wh_print_jobs")); db.execute(text("DELETE FROM wh_agents")); db.commit(); db.close()
+db.execute(text("DELETE FROM wh_print_jobs")); db.execute(text("DELETE FROM wh_agents"))
+db.execute(text("DELETE FROM wh_box_items WHERE box_id IN (SELECT id FROM wh_boxes WHERE code IN ('Q1','Q2'))"))
+db.execute(text("DELETE FROM wh_events WHERE box_code IN ('Q1','Q2')"))
+db.execute(text("DELETE FROM wh_boxes WHERE code IN ('Q1','Q2')")); db.commit(); db.close()
 
 app = FastAPI(); app.include_router(warehouse.router)
 app.middleware("http")(quiet_db.wh_cache_middleware)
@@ -93,4 +96,6 @@ assert c.post("/api/wh/boxes", json={"code": "Q2", "category": "Q"}).status_code
 n, fresh = sql_count(lambda: c.get("/api/wh/boxes")); assert n > 0
 assert {b["code"] for b in fresh["boxes"]} >= {"Q1", "Q2"}, fresh
 n, _ = sql_count(lambda: c.get("/api/wh/boxes/next-code", params={"category": "Q"})); assert n > 0   # генератор не кешується
+c.options("/api/wh/boxes", headers={"Origin": "https://web.telegram.org", "Access-Control-Request-Method": "GET"})
+n, _ = sql_count(lambda: c.get("/api/wh/boxes")); assert n == 0, n           # preflight кеш не скидає
 print("кеш складу: OK")
