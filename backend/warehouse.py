@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from auth import _admin_ids, _admin_token, _bot_token, telegram_profile_from_init_data
 from catalog import _SOLD_JOIN
+import quiet_db
 from database import SessionLocal, get_db
 from images import main_image_url
 
@@ -1160,8 +1161,9 @@ def print_job_create(payload: PrintJobIn = Body(...), db: Session = Depends(get_
         if not ids:
             raise HTTPException(status_code=400, detail="Не передано товарів")
         data = {"product_ids": ids, "copies": payload.copies, "layout": payload.layout}
-    # Чи є кому друкувати: агент відмічається при кожному опитуванні.
-    agent_seen = db.execute(text("SELECT MAX(seen_at) FROM wh_agents")).scalar()
+    # Чи є кому друкувати: агент відмічається пульсом (у пам'яті — див. quiet_db).
+    mem = quiet_db.agent_latest()
+    agent_seen = mem["seen_at"] if mem else db.execute(text("SELECT MAX(seen_at) FROM wh_agents")).scalar()
     payload_json = json.dumps(data, ensure_ascii=False, sort_keys=True)
     # Друк: таке саме завдання вже чекає в черзі (принтер був недоступний, а
     # людина тисне ще раз) — не плодимо копії, повертаємо наявне.
@@ -1172,21 +1174,30 @@ def print_job_create(payload: PrintJobIn = Body(...), db: Session = Depends(get_
             ORDER BY id LIMIT 1
         """), {"kind": payload.kind, "payload": payload_json}).mappings().first()
         if dup:
+            quiet_db.queue_changed()
             return {**_job_dict(dict(dup)), "agent_seen_at": agent_seen, "duplicate": True}
     r = db.execute(text("""
         INSERT INTO wh_print_jobs (kind, payload, created_by)
         VALUES (:kind, CAST(:payload AS jsonb), :by) RETURNING *
     """), {"kind": payload.kind, "payload": payload_json, "by": actor}).mappings().first()
     db.commit()
+    quiet_db.queue_changed()   # агент побачить завдання на наступному опитуванні
     return {**_job_dict(dict(r)), "agent_seen_at": agent_seen}
 
 
 @router.get("/print-jobs")
 def print_jobs(status: str = Query("queued"), limit: int = Query(20, ge=1, le=100),
                db: Session = Depends(get_db), _: str = Depends(require_staff)):
+    # Агент BMS питає це кожні 5 с. Порожня черга — відповідь з пам'яті, без БД,
+    # інакше Neon не засинає ніколи (див. quiet_db, інцидент вересня 2026).
+    if status == "queued" and quiet_db.queue_known_empty():
+        return {"jobs": []}
+    gen = quiet_db.queue_gen()
     rows = db.execute(text(
         "SELECT * FROM wh_print_jobs WHERE status = :st ORDER BY created_at LIMIT :lim"
     ), {"st": status, "lim": limit}).mappings().all()
+    if status == "queued":
+        quiet_db.queue_observed(not rows, gen)
     return {"jobs": [_job_dict(dict(r)) for r in rows]}
 
 
@@ -1236,7 +1247,9 @@ def print_job_cancel(job_id: int, db: Session = Depends(get_db), _: str = Depend
 def print_agent_heartbeat(agent: str = Query("bms"), printer: Optional[str] = Query(None),
                           db: Session = Depends(get_db), _: str = Depends(require_staff)):
     """Агент повідомляє, що живий і який принтер бачить (телефон покаже «офлайн»,
-    якщо пульсу нема понад хвилину)."""
+    якщо пульсу нема понад хвилину). Пульс — у пам'яті; у БД лише зрідка."""
+    if not quiet_db.agent_beat(agent[:64], printer or None):
+        return {"ok": True}
     db.execute(text("""
         INSERT INTO wh_agents (agent, seen_at, printer) VALUES (:agent, now(), :printer)
         ON CONFLICT (agent) DO UPDATE SET seen_at = now(), printer = EXCLUDED.printer
@@ -1247,8 +1260,10 @@ def print_agent_heartbeat(agent: str = Query("bms"), printer: Optional[str] = Qu
 
 @router.get("/print-agent/status")
 def print_agent_status(db: Session = Depends(get_db), _: str = Depends(require_staff)):
-    r = db.execute(text("SELECT agent, seen_at, printer FROM wh_agents ORDER BY seen_at DESC LIMIT 1")).mappings().first()
-    queued = db.execute(text("SELECT COUNT(*) FROM wh_print_jobs WHERE status = 'queued'")).scalar()
+    r = quiet_db.agent_latest() or db.execute(text(
+        "SELECT agent, seen_at, printer FROM wh_agents ORDER BY seen_at DESC LIMIT 1")).mappings().first()
+    queued = 0 if quiet_db.queue_known_empty() else \
+        db.execute(text("SELECT COUNT(*) FROM wh_print_jobs WHERE status = 'queued'")).scalar()
     online = bool(r and (datetime.now(timezone.utc) - r["seen_at"]).total_seconds() < 90)
     return {"online": online, "agent": r["agent"] if r else None, "last_seen": r["seen_at"] if r else None,
             "printer": r["printer"] if r else None, "queued": int(queued or 0)}

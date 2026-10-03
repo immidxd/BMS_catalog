@@ -12,6 +12,7 @@ from auth import admin_writes_enabled
 from catalog import router as catalog_router
 from favorites import router as favorites_router
 from images import URL_PREFIX as IMAGES_URL_PREFIX, get_images_dir
+from quiet_db import wh_cache_middleware
 from sharing import router as sharing_router
 from shop_info import how_to_buy
 from tg_business import router as tg_business_router
@@ -114,6 +115,10 @@ def _ensure_catalog_tables() -> None:
 _images_dir = get_images_dir()
 if os.path.isdir(_images_dir):
     app.mount(IMAGES_URL_PREFIX, StaticFiles(directory=_images_dir), name="product-images")
+
+# Опитувані GET-и складу — з пам'яті, щоб Neon міг заснути (правило безкоштовного
+# ліміту, див. quiet_db.py і CLAUDE.md).
+app.middleware("http")(wh_cache_middleware)
 
 # index.html — НЕ кешувати (щоб деплой/оновлення фронтенду показувались одразу, без
 # «застряглого» старого бандла в Telegram-WebView). Хешовані asset-и (assets/*.js|css)
