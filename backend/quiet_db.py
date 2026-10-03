@@ -12,7 +12,8 @@
   • пульс агента — у пам'яті (у БД лише перший після старту / зміна принтера /
     раз на 6 год), щоб статус «онлайн» переживав рестарт;
   • GET-и складу, які BMS опитує кожні 10–15 с (коробки, події, працівники),
-    кешуються до будь-якої зміни складу (будь-який не-GET /api/wh/*) або TTL.
+    кешуються до будь-якої зміни складу (POST/PATCH/PUT/DELETE /api/wh/*) або TTL
+    (30 хв — дані товарів, що їх привозить синк, можуть відставати не більше).
 
 Припущення: ОДИН процес uvicorn (див. Dockerfile CMD). Якщо колись буде кілька
 воркерів/реплік — вимкнути CATALOG_QUIET_DB=0 (поведінка як раніше).
@@ -105,9 +106,10 @@ def wh_changed() -> None:
 
 
 async def wh_cache_middleware(request, call_next):
-    """HTTP-middleware: будь-який не-GET /api/wh/* скидає кеш; опитувані GET — з кешу."""
+    """HTTP-middleware: будь-який запис (POST/PATCH/PUT/DELETE) /api/wh/* скидає кеш;
+    опитувані GET — з кешу. OPTIONS/HEAD (preflight) кеш не чіпають."""
     path = request.url.path
-    if not path.startswith("/api/wh/"):
+    if not path.startswith("/api/wh/") or request.method in ("OPTIONS", "HEAD"):
         return await call_next(request)
     if request.method != "GET":
         try:
@@ -118,7 +120,7 @@ async def wh_cache_middleware(request, call_next):
         return await call_next(request)
 
     from starlette.responses import Response
-    who = (request.headers.get("authorization") or "") + "|" + (request.headers.get("x-telegram-init-data") or "")
+    who = "|".join(request.headers.get(h) or "" for h in ("authorization", "x-telegram-init-data", "origin"))
     key = hashlib.sha256(f"{path}?{request.url.query}|{who}".encode()).hexdigest()
     now = time.time()
     with _lock:
