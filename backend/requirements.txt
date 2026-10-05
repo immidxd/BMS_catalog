@@ -1,6 +1,8 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
-sqlalchemy>=2.0
+# <2.1: у 2.1 змінився типовий драйвер Postgres (psycopg 3) — каталог падав на старті
+# (05.10.2026). Нову мажорну версію — лише після перевірки локально.
+sqlalchemy>=2.0,<2.1
 psycopg2-binary>=2.9
 python-dotenv>=1.0
 # Запис намірів замовлення в Google Sheets (orders_sheet.py)

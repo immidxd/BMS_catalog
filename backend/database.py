@@ -19,8 +19,24 @@ DB_NAME = os.getenv("DB_NAME", "bsstorage")
 
 # Хмара (Neon/Supabase) дає готовий рядок підключення з SSL — якщо заданий
 # DATABASE_URL, використовуємо його напряму (інакше будуємо з локальних DB_*).
-DATABASE_URL = os.getenv("DATABASE_URL") or \
-    f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+def _with_psycopg2(url: str) -> str:
+    """Явний драйвер psycopg2 у рядку підключення.
+
+    ⚠️ Інцидент 03–05.10.2026: каталог лежав ~2 доби. Railway зібрав образ із
+    SQLAlchemy 2.1 (у requirements було лише `>=2.0`), а там для `postgresql://`
+    драйвер за замовчуванням — psycopg 3, якого в образі немає → кожен старт:
+    `ModuleNotFoundError: No module named 'psycopg'`. Явний `+psycopg2` не
+    залежить від того, що SQLAlchemy вважає «типовим». Явно вказаний інший
+    драйвер (`postgresql+asyncpg://…`) не чіпаємо.
+    """
+    for prefix in ("postgresql://", "postgres://", "postgresql+psycopg://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg2://" + url[len(prefix):]
+    return url
+
+
+DATABASE_URL = _with_psycopg2(os.getenv("DATABASE_URL") or
+                              f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
 
 # Пул з'єднань. ЛОКАЛЬНО (свій Postgres) тримаємо звичайний пул — це швидко й дешево.
 # У ХМАРІ (Neon) постійно відкрите з'єднання не дає compute заснути, і безкоштовні
