@@ -202,11 +202,23 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
     let active = false, inGallery = false, atStart = true, atEnd = true;
     let mode: 'undecided' | 'drag' | 'ignore' = 'undecided';
 
+    // Масштаб — не свайп. Люди з поганим зором збільшують сторінку щипком, щоб
+    // прочитати текст, і водять пальцем по збільшеному: гортання товарів тоді лише
+    // заважало б. Тож щипок (2+ пальці) або збільшена сторінка вимикають свайп
+    // на час жесту; у звичайному масштабі він працює як завжди.
+    const pageZoomed = () => (window.visualViewport?.scale ?? 1) > 1.01;
+    const cancelDrag = () => {
+      if (mode === 'drag') setRail(restPx(), 260);   // уже тягнули — пружиною на місце
+      dragging.current = false;
+      mode = 'ignore';
+    };
+
     const onStart = (e: TouchEvent) => {
       if (animating.current) return;              // ще їде — новий жест не перехоплюємо
+      if (e.touches.length > 1) { cancelDrag(); return; }   // другий палець — це щипок
       const t = e.touches[0];
       x0 = lastX = t.clientX; y0 = t.clientY; lastT = e.timeStamp;
-      v = 0; dx = 0; active = true; mode = 'undecided';
+      v = 0; dx = 0; active = true; mode = pageZoomed() ? 'ignore' : 'undecided';
       // Галерея перехоплює свайп ЛИШЕ коли є що гортати (≥2 фото). За одного фото
       // свайп по фото теж гортає ТОВАРИ (інакше на фото «нічого не відбувається»).
       const g = (e.target as HTMLElement)?.closest?.('.gallery') as HTMLElement | null;
@@ -220,6 +232,7 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
 
     const onMove = (e: TouchEvent) => {
       if (!active) return;
+      if (e.touches.length > 1 || pageZoomed()) { cancelDrag(); return; }
       const t = e.touches[0];
       const ddx = t.clientX - x0, ddy = t.clientY - y0;
       if (mode === 'undecided') {
