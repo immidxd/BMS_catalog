@@ -993,6 +993,20 @@ async def get_catalog_product(
     except Exception:
         db.rollback()          # таблиці ще нема (не синхронізовано) — технології не критичні
 
+    # Обхват халяви (повний: min — низ біля щиколотки, max — верх) і ширина устілки —
+    # теж ОКРЕМИМ guarded-запитом: власник почав заповнювати ці поля пізніше за решту
+    # замірів, і якщо копія БД ще без колонок, картка працює далі, лише без цих рядків.
+    extra_cols = ("measurements_shaft_circumference_min", "measurements_shaft_circumference_max",
+                  "measurements_insole_width_min", "measurements_insole_width_max")
+    extra = dict.fromkeys(extra_cols)
+    try:
+        extra = dict(db.execute(
+            text(f"SELECT {', '.join(extra_cols)} FROM products WHERE id = :id"),
+            {"id": product_id},
+        ).mappings().one())
+    except Exception:
+        db.rollback()
+
     # Деталі картки — read-only. Сусідні картки завантажуються наперед, тому GET тут
     # не є доказом перегляду. Явну product_view подію надсилає активна сторінка.
     views = 0
@@ -1062,6 +1076,7 @@ async def get_catalog_product(
     out = {k: row[k] for k in row.keys() if k not in skip}
     out["conditionname"] = _display_condition(out.get("conditionname"))
     out["technology"] = technology
+    out.update(extra)
     # Опис публіці — ЛИШЕ якщо адмін явно зробив його публічним. Адмін (only_published
     # false) бачить опис завжди (для перегляду/редагування).
     if only_published and not row["description_public"]:

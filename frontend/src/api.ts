@@ -88,6 +88,11 @@ export type ProductDetail = {
   measurements_heel_max: number | null;
   measurements_sole_thickness_min: number | null;
   measurements_sole_thickness_max: number | null;
+  // Повний обхват халяви: min — низ (щиколотка), max — верх; у картці — напівобхват
+  measurements_shaft_circumference_min?: number | null;
+  measurements_shaft_circumference_max?: number | null;
+  measurements_insole_width_min?: number | null;   // ширина устілки, см
+  measurements_insole_width_max?: number | null;
   materials: Record<string, string[]>;
   images: ProductImage[];
   size_variants: SizeVariant[];
@@ -202,6 +207,11 @@ export type Hints = {
   photo_note?: string;
   photo_offer?: string;                 // перед посиланням «запросити ›»
   height?: string;                      // біля рядка «Висота»
+  shaft_bottom?: string;                // Н/О халяви внизу
+  shaft_top?: string;                   // Н/О халяви вгорі
+  shaft?: string;                       // Н/О халяви (один замір)
+  shaft_warning?: string;               // червоний рядок під Н/О
+  insole_width?: string;                // біля «Ширина устілки»
   condition?: Record<string, string>;   // ключ — назва стану в нижньому регістрі
   width?: Record<string, string>;       // ключ — позначка повноти (F½, G…)
   materials?: Record<string, string>;   // ключ — абревіатура (EVA…)

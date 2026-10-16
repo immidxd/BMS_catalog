@@ -511,6 +511,15 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   const width = product.width ? product.width.trim().replace(/\s*1\/2$/, '½').toUpperCase() : null;
   // Стан у вітрині — «Хороший / Сток»; ключ підказки — назва з довідника («хороший»)
   const conditionKey = (product.conditionname ?? '').split('/')[0].trim().toLowerCase();
+  // Обхват халяви в BMS — ПОВНИЙ (min — низ біля щиколотки, max — верх). Покупцю —
+  // напівобхват (Н/О = половина: так міряють халяву, покладену рівно). Два різні
+  // заміри — два рядки (низ/верх), щоб не плутати; один чи однакові — один рядок.
+  const half = (v: number | null | undefined) => (v == null ? null : `${+(v / 2).toFixed(1)} см`);
+  const sMin = product.measurements_shaft_circumference_min, sMax = product.measurements_shaft_circumference_max;
+  const shaftRows: Array<[string, string | null]> = sMin != null && sMax != null && sMin !== sMax
+    ? [['Н/О халяви внизу', half(sMin)], ['Н/О халяви вгорі', half(sMax)]]
+    : [['Н/О халяви', half(sMin ?? sMax)]];
+  const lastShaftKey = [...shaftRows].reverse().find(([, v]) => v)?.[0];
   const specs: Array<[string, string | null]> = [
     ['Підвид', product.subtypename],
     ['Стиль', product.stylename],
@@ -520,9 +529,11 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     ['Сезон', showSeason ? formatSeason(product.season) : null],
     ['Довжина', rangeCm(product.measurements_length_min, product.measurements_length_max)],
     ['Висота', rangeCm(product.measurements_height_min, product.measurements_height_max)],
+    ...shaftRows,
     ['Каблук', rangeCm(product.measurements_heel_min, product.measurements_heel_max)],
     ['Платформа', rangeCm(product.measurements_sole_thickness_min, product.measurements_sole_thickness_max)],
     ['Повнота', width],
+    ['Ширина устілки', rangeCm(product.measurements_insole_width_min ?? null, product.measurements_insole_width_max ?? null)],
     ['Рік', product.year ? String(product.year) : null],
   ];
   // Підказки до рядків характеристик (лише де є що пояснити)
@@ -557,6 +568,10 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
       'Повнота': widthHint,
     } : {}),
     ...(hints.height ? { 'Висота': hints.height } : {}),
+    ...(hints.shaft_bottom ? { 'Н/О халяви внизу': hints.shaft_bottom } : {}),
+    ...(hints.shaft_top ? { 'Н/О халяви вгорі': hints.shaft_top } : {}),
+    ...(hints.shaft ? { 'Н/О халяви': hints.shaft } : {}),
+    ...(hints.insole_width ? { 'Ширина устілки': hints.insole_width } : {}),
   };
 
   // Підпис розміру варіанта: EU → літерний → устілка в см
@@ -763,6 +778,8 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
                 <span className="spec-val">{capSlash(value)}</span>
               </div>
               {hint === key && specHint[key] && <HintText onClose={closeHint}>{specHint[key]}</HintText>}
+              {/* Під заміром халяви — завжди видиме застереження: заміри могли бути з іншого розміру */}
+              {key === lastShaftKey && hints.shaft_warning && <p className="spec-warning">{hints.shaft_warning}</p>}
             </React.Fragment>
           ))}
         </div>
