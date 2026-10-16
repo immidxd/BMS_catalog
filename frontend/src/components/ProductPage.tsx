@@ -351,6 +351,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   // Відкрита підказка ⓘ — завжди одна: друга закриває першу, щоб картка не «розповзалась»
   const [hint, setHint] = useState<string | null>(null);
   const toggleHint = (id: string) => { haptic('light'); setHint((h) => (h === id ? null : id)); };
+  const closeHint = () => { haptic('light'); setHint(null); };
   const [copied, setCopied] = useState(false);
   const [shared, setShared] = useState(false);   // «Скопійовано ✓» після поділитися
   const [zoomAt, setZoomAt] = useState<number | null>(null);   // відкрите фото в переглядачі
@@ -520,7 +521,8 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
         <>
           {conditionHint}
           {conditionKey !== 'новий' && sellerUsername && (
-            <button type="button" className="hint-action" onClick={handlePhotoRequest}>
+            <button type="button" className="hint-action"
+              onClick={(e) => { e.stopPropagation(); handlePhotoRequest(); }}>
               <CameraIcon />Запросити реальні фото
             </button>
           )}
@@ -658,7 +660,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
               {pickable ? 'Оберіть розмір' : 'Розміри в наявності'}
               {hints.sizes && <InfoButton id="sizes" open={hint === 'sizes'} onToggle={toggleHint} label="Про розміри й заміри" />}
             </h3>
-            {hint === 'sizes' && <p className="hint-text">{hints.sizes}</p>}
+            {hint === 'sizes' && <HintText onClose={closeHint}>{hints.sizes}</HintText>}
             <div className="filter-options">
               {product.size_variants.map((variant) => (
                 pickable ? (
@@ -713,7 +715,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
               {techTerms.length > 0 && <InfoButton id="tech" open={hint === 'tech'} onToggle={toggleHint} label="Що дають технології" />}
             </h3>
             {hint === 'tech' && (
-              <p className="hint-text">{techTerms.map((t) => <span className="hint-line" key={t.slug}>{hints.tech![t.slug]}</span>)}</p>
+              <HintText onClose={closeHint}>{techTerms.map((t) => <span className="hint-line" key={t.slug}>{hints.tech![t.slug]}</span>)}</HintText>
             )}
             {/* Лише назви: лого вже стоять медалями на фото — двічі те саме виглядало дублем */}
             <div className="tech-row">
@@ -735,7 +737,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
                 </span>
                 <span className="spec-val">{capSlash(value)}</span>
               </div>
-              {hint === key && specHint[key] && <p className="hint-text">{specHint[key]}</p>}
+              {hint === key && specHint[key] && <HintText onClose={closeHint}>{specHint[key]}</HintText>}
             </React.Fragment>
           ))}
         </div>
@@ -747,7 +749,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
               {materialTerms.length > 0 && <InfoButton id="materials" open={hint === 'materials'} onToggle={toggleHint} label="Пояснення позначень" />}
             </h3>
             {hint === 'materials' && (
-              <p className="hint-text">{materialTerms.map((term) => <span className="hint-line" key={term}>{hints.materials![term]}</span>)}</p>
+              <HintText onClose={closeHint}>{materialTerms.map((term) => <span className="hint-line" key={term}>{hints.materials![term]}</span>)}</HintText>
             )}
             {materialRows.map(([key, value]) => (
               <div className="spec-row" key={key}>
@@ -957,6 +959,12 @@ const InfoButton = ({ id, open, onToggle, label }: {
       <circle cx="12" cy="12" r="9.2" /><path d="M12 11v5.3" /><path d="M12 7.7v.01" strokeWidth="2.4" />
     </svg>
   </button>
+);
+
+// Текст підказки: натиск по ньому теж згортає — не треба цілитись у маленький ⓘ.
+// Кнопки всередині (напр. «Запросити реальні фото») зупиняють клік і не згортають.
+const HintText = ({ children, onClose }: { children: React.ReactNode; onClose: () => void }) => (
+  <p className="hint-text" onClick={onClose}>{children}</p>
 );
 
 const CameraIcon = () => (
