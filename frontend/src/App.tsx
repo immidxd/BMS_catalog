@@ -4,6 +4,7 @@ import { CatalogItem, CatalogQuery, Facets, FilterOptions, Hints, ShopInfoSectio
 import { HowToBuySheet } from './components/HowToBuySheet';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
 import { ReorderSheet } from './components/ReorderSheet';
+import { ScrollJump } from './components/ScrollJump';
 import { ProductCard, SkeletonCard } from './components/ProductCard';
 import { ProductPage } from './components/ProductPage';
 import { useCatalog, useDebounced } from './hooks/useCatalog';
@@ -570,6 +571,10 @@ export const App = () => {
           </button>
         </footer>
       )}
+
+      {/* ↑ на початок / ↓ туди, куди догорнули — поверх стрічки, лише коли є куди стрибати */}
+      <ScrollJump resetKey={`${queryKey}|${favView}`}
+        hidden={productId !== null || isSheetOpen || infoOpen || reorderOpen || tokenPromptOpen} />
 
       {isSheetOpen && filterOptions && (
         <FilterSheet
