@@ -533,14 +533,21 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
       'Стан': (
         <>
           {conditionHint}
-          {conditionKey !== 'новий' && hints.photo_offer && (
-            <span className="hint-line hint-offer">{hints.photo_offer}</span>
-          )}
-          {conditionKey !== 'новий' && sellerUsername && (
-            <button type="button" className="hint-action"
-              onClick={(e) => { e.stopPropagation(); handlePhotoRequest(); }}>
-              <CameraIcon />Запросити реальні фото
-            </button>
+          {/* Пропозиція й дія — одне речення: посилання в кінці тексту, а не окремий
+              «прилиплий» рядок-кнопка під ним */}
+          {conditionKey !== 'новий' && (hints.photo_offer || sellerUsername) && (
+            <span className="hint-line hint-offer">
+              {hints.photo_offer}
+              {sellerUsername && (
+                <>
+                  {' '}
+                  <button type="button" className="hint-action"
+                    onClick={(e) => { e.stopPropagation(); handlePhotoRequest(); }}>
+                    Запросити реальні фото<ChevronIcon dir="right" size={13} />
+                  </button>
+                </>
+              )}
+            </span>
           )}
         </>
       ),
@@ -983,14 +990,8 @@ const HintText = ({ children, onClose }: { children: React.ReactNode; onClose: (
   <p className="hint-text" onClick={onClose}>{children}</p>
 );
 
-const CameraIcon = () => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" /><circle cx="12" cy="13.2" r="3.4" />
-  </svg>
-);
-
-const ChevronIcon = ({ dir }: { dir: 'left' | 'right' }) => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+const ChevronIcon = ({ dir, size = 18 }: { dir: 'left' | 'right'; size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     {dir === 'left' ? <polyline points="15 18 9 12 15 6" /> : <polyline points="9 18 15 12 9 6" />}
   </svg>
 );

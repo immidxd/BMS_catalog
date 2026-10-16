@@ -1713,19 +1713,25 @@ button {
 .hint-line + .hint-line { margin-top: 2px; }
 .hint-scale { display: block; margin-top: 2px; color: var(--fg-subtle); }
 .hint-offer { margin-top: 4px; }
+/* «Запросити реальні фото» — посилання в кінці речення пропозиції (не окремий рядок):
+   той самий кегль, що й текст, лише темніше й жирніше; не рветься посередині */
 .hint-action {
-  display: flex;
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  padding: 4px 0;
+  gap: 1px;
+  padding: 0;
   border: 0;
   background: none;
   color: var(--fg);
-  font-size: var(--text-sm);
+  font: inherit;
   font-weight: 600;
+  white-space: nowrap;
+  vertical-align: baseline;
   cursor: pointer;
 }
+.hint-action::after { content: ''; position: absolute; inset: -8px -4px; }   /* зручна зона дотику */
+.hint-action svg { margin-top: 1px; }
 @media (hover: hover) and (pointer: fine) {
   .hint-btn:hover { color: var(--fg-muted); }
   .hint-btn.on:hover { color: var(--fg); }
