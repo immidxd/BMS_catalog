@@ -12,9 +12,10 @@ from auth import admin_writes_enabled
 from catalog import router as catalog_router
 from favorites import router as favorites_router
 from images import URL_PREFIX as IMAGES_URL_PREFIX, get_images_dir
+from logos import tech_logos
 from quiet_db import wh_cache_middleware
 from sharing import router as sharing_router
-from shop_info import how_to_buy
+from shop_info import hints, how_to_buy
 from tg_business import router as tg_business_router
 from warehouse import ensure_bot_menu_button, ensure_warehouse_schema, router as warehouse_router
 
@@ -41,8 +42,9 @@ app.add_middleware(
 
 
 @app.get("/api/config")
-async def get_config():
-    """Публічна конфігурація для фронтенду."""
+def get_config():
+    """Публічна конфігурація для фронтенду. Синхронна (пул потоків): маніфест лого
+    раз на 10 хв тягнеться з R2 мережею — це не має блокувати цикл подій."""
     admin_ids = [int(x) for x in os.getenv("ADMIN_TG_IDS", "").replace(" ", "").split(",") if x.isdigit()]
     return {
         "seller_username": os.getenv("SELLER_TG_USERNAME", ""),
@@ -57,6 +59,9 @@ async def get_config():
         # «Як купити» — їде разом із конфігом (він і так тягнеться на старті),
         # щоб відкриття екрана не чекало окремого запиту
         "how_to_buy": how_to_buy(),
+        # Підказки ⓘ картки товару й лого технологій (з R2, без БД)
+        "hints": hints(),
+        "tech_logos": tech_logos(),
         "admin_tg_ids": admin_ids,
         # Чи доступний адмін-запис публікації (Фаза 2) — щоб фронт знав, чи показувати тумблер
         "admin_writes": admin_writes_enabled(),

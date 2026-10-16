@@ -196,10 +196,26 @@ export type ShopInfoSection = {
   draft?: boolean;
 };
 
+// Підказки ⓘ картки товару (тексти — backend/shop_info.py HINTS)
+export type Hints = {
+  sizes?: string;
+  photo_note?: string;
+  condition?: Record<string, string>;   // ключ — назва стану в нижньому регістрі
+  width?: Record<string, string>;       // ключ — позначка повноти (F½, G…)
+  width_scale?: string;
+  materials?: Record<string, string>;   // ключ — абревіатура (EVA…)
+  tech?: Record<string, string>;        // ключ — слаг технології (techLogos.ts)
+};
+
+// Лого технології з маніфесту R2 (logos/manifest.json), url — зменшена веб-копія
+export type TechLogo = { slug: string; label: string; aliases: string[]; url: string };
+
 export const fetchConfig = (): Promise<{
   seller_username: string; seller_phone: string; seller_instagram: string; seller_viber: string;
   tg_channel: string; shop_name: string; admin_tg_ids: number[]; admin_writes: boolean;
   how_to_buy?: ShopInfoSection[];
+  hints?: Hints;
+  tech_logos?: TechLogo[];
 }> => fetchJson('/api/config');
 
 // ── Адмін-запис публікації (Фаза 2) — захищений: Telegram initData АБО адмін-токен ──

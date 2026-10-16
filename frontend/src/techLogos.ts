@@ -1,7 +1,7 @@
 // Технології взуття: парсинг «брудного» рядка (напр. "Vibram, MEGAGRIP, Gore-tex")
-// у охайні бейджі. Для відомих технологій — гарний лейбл і слаг лого; логотипи
-// (файли в public/tech-logos/<slug>.svg|png) підкладає власник — до того часу
-// показуємо чистий текстовий бейдж (див. ProductPage: img з onError → text).
+// у охайні бейджі. Для відомих технологій — гарний лейбл і слаг лого. Самі логотипи
+// живуть у R2 (logos/, майстер — тека «Лого»): бекенд віддає їх у /api/config
+// (tech_logos), зіставлення — за слагом або аліасом. Нема лого — текстовий бейдж.
 
 export type Tech = { label: string; slug: string };
 
@@ -33,7 +33,12 @@ const KNOWN: Record<string, Tech> = {
   'simpatex': { label: 'SimpaTex', slug: 'simpatex' },
   'respira': { label: 'Respira', slug: 'respira' },
   'spherica': { label: 'Spherica', slug: 'spherica' },
-  'cordura': { label: 'Cordura', slug: 'cordura' },
+  'cordura': { label: 'CORDURA', slug: 'cordura' },
+  // У BMS ця мембрана записана трьома способами — у вітрині одна технологія
+  'rieker tex': { label: 'RiekerTEX', slug: 'rieker-tex' },
+  'riekertex': { label: 'RiekerTEX', slug: 'rieker-tex' },
+  'rieker-tex': { label: 'RiekerTEX', slug: 'rieker-tex' },
+  'rieker antistress': { label: 'Rieker Antistress', slug: 'rieker-antistress' },
   'ultracush': { label: 'UltraCush', slug: 'ultracush' },
   'softwair': { label: 'SoftWair', slug: 'softwair' },
   'zebrilus': { label: 'Zebrilus', slug: 'zebrilus' },

@@ -1,8 +1,8 @@
 // Повна сторінка товару: галерея (свайп), характеристики, зв'язок з продавцем
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { AdminAuth, ProductDetail, cap, capSlash, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
-import { parseTechnologies } from '../techLogos';
+import { AdminAuth, Hints, ProductDetail, TechLogo, cap, capSlash, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
+import { Tech, parseTechnologies } from '../techLogos';
 import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, shareViaTelegram, showBackButton } from '../telegram';
 import { productUrl } from '../deepLink';
 import { Lightbox } from './Lightbox';
@@ -24,6 +24,8 @@ type Props = {
   sellerPhone: string;
   sellerInstagram: string;
   sellerViber: string;
+  hints?: Hints;            // тексти підказок ⓘ (з /api/config)
+  techLogos?: TechLogo[];   // лого технологій з R2 (з /api/config)
   // Екран «Як купити» — відкривається зі сторінки товару, де сумнів найгостріший
   onHowToBuy?: () => void;
   admin?: boolean;   // адмін може відкрити деталь ще не опублікованого товару
@@ -58,7 +60,7 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
 const SWIPE_GAP = 12;
 const SWIPE_EASE = 'cubic-bezier(.22,.61,.36,1)';
 
-export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, onHowToBuy, admin = false, onBack }: Props) => {
+export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, hints = {}, techLogos = [], onHowToBuy, admin = false, onBack }: Props) => {
   const [error, setError] = useState(false);
   const [, bump] = useState(0);                    // ререндер, коли поповнився кеш деталей
   const cache = useRef(new Map<string, ProductDetail>()).current;
@@ -311,6 +313,7 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
                   onPatch={(updater) => patchProduct(id, updater)}
                   sellerUsername={sellerUsername} sellerPhone={sellerPhone}
                   sellerInstagram={sellerInstagram} sellerViber={sellerViber}
+                  hints={hints} techLogos={techLogos}
                   onHowToBuy={onHowToBuy} />
               ) : (
                 <div className="empty">Завантаження…</div>
@@ -334,6 +337,8 @@ type SheetProps = {
   sellerPhone: string;
   sellerInstagram: string;
   sellerViber: string;
+  hints: Hints;
+  techLogos: TechLogo[];
   onHowToBuy?: () => void;
   admin: boolean;
 };
@@ -341,8 +346,11 @@ type SheetProps = {
 // Одна картка товару всередині панелі стрічки: галерея, характеристики, зв'язок.
 // Власний стан галереї (слайд/скрол) — у кожної панелі свій, тому сусідні картки
 // не «підглядають» одна за одною під час свайпу.
-const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, onHowToBuy, admin }: SheetProps) => {
+const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, hints, techLogos, onHowToBuy, admin }: SheetProps) => {
   const [slide, setSlide] = useState(0);
+  // Відкрита підказка ⓘ — завжди одна: друга закриває першу, щоб картка не «розповзалась»
+  const [hint, setHint] = useState<string | null>(null);
+  const toggleHint = (id: string) => { haptic('light'); setHint((h) => (h === id ? null : id)); };
   const [copied, setCopied] = useState(false);
   const [shared, setShared] = useState(false);   // «Скопійовано ✓» після поділитися
   const [zoomAt, setZoomAt] = useState<number | null>(null);   // відкрите фото в переглядачі
@@ -354,7 +362,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   const sizesRef = useRef<HTMLDivElement>(null);
   const [sizesFlash, setSizesFlash] = useState(false);   // підсвітка «оберіть розмір»
 
-  useEffect(() => { setSlide(0); trackRef.current?.scrollTo({ left: 0 }); }, [product.id]);
+  useEffect(() => { setSlide(0); setHint(null); trackRef.current?.scrollTo({ left: 0 }); }, [product.id]);
 
   // Скидаємо вибір при переході на інший товар; єдиний розмір — обираємо самі
   useEffect(() => {
@@ -432,6 +440,16 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     contactSeller(sellerUsername, orderMessage());
   };
 
+  // Запит реальних фото (стан не «Новий»). Навмисно НЕ contact_click і БЕЗ фрази
+  // «цікавить товар»: інакше вебхук Business (tg_business.py) записав би лист у
+  // «Замовлення» як замовлення, а це лише прохання показати пару.
+  const handlePhotoRequest = () => {
+    haptic('light');
+    const chosen = product.size_variants.find((v) => v.id === sizeId);
+    contactSeller(sellerUsername, `Вітаю! Прошу зробити реальні фото товару ${product.productnumber}`
+      + ` — ${titleText}${chosen ? `, ${variantLabel(chosen)}` : ''}.`);
+  };
+
   // ♥️ на сторінці товару: перемикаємо обране й оновлюємо лічильник у стані картки
   const handleFav = () => {
     if (!onToggleFav) return;
@@ -475,6 +493,10 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
 
   // Сезон ховаємо для аксесуарів (сумки/валізи/ремені/окуляри); Габарити — лише де є
   const showSeason = !NO_SEASON_TYPES.has(product.typename ?? '');
+  // Повнота: у BMS половинки записано «F 1/2» — у вітрині охайне «F½»
+  const width = product.width ? product.width.trim().replace(/\s*1\/2$/, '½').toUpperCase() : null;
+  // Стан у вітрині — «Хороший / Сток»; ключ підказки — назва з довідника («хороший»)
+  const conditionKey = (product.conditionname ?? '').split('/')[0].trim().toLowerCase();
   const specs: Array<[string, string | null]> = [
     ['Підвид', product.subtypename],
     ['Стиль', product.stylename],
@@ -486,9 +508,29 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     ['Висота', rangeCm(product.measurements_height_min, product.measurements_height_max)],
     ['Каблук', rangeCm(product.measurements_heel_min, product.measurements_heel_max)],
     ['Платформа', rangeCm(product.measurements_sole_thickness_min, product.measurements_sole_thickness_max)],
-    ['Повнота', product.width],
+    ['Повнота', width],
     ['Рік', product.year ? String(product.year) : null],
   ];
+  // Підказки до рядків характеристик (лише де є що пояснити)
+  const conditionHint = hints.condition?.[conditionKey];
+  const widthHint = width ? hints.width?.[width] : undefined;
+  const specHint: Record<string, React.ReactNode> = {
+    ...(conditionHint ? {
+      'Стан': (
+        <>
+          {conditionHint}
+          {conditionKey !== 'новий' && sellerUsername && (
+            <button type="button" className="hint-action" onClick={handlePhotoRequest}>
+              <CameraIcon />Запросити реальні фото
+            </button>
+          )}
+        </>
+      ),
+    } : {}),
+    ...(widthHint ? {
+      'Повнота': <>{widthHint}{hints.width_scale && <span className="hint-scale">{hints.width_scale}</span>}</>,
+    } : {}),
+  };
 
   // Підпис розміру варіанта: EU → літерний → устілка в см
   const variantLabel = (v: typeof product.size_variants[number]): string =>
@@ -503,9 +545,19 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     .map((position) => [MATERIAL_LABELS[position],
       product.materials[position].map((m) => capSlash(m)).join(', ')] as const);
 
+  // Абревіатури в матеріалах (EVA, TPU…) — пояснюємо ті, що справді є в цьому товарі
+  const materialTerms = Object.keys(hints.materials ?? {}).filter((term) =>
+    materialRows.some(([, value]) => new RegExp(`\\b${term}\\b`).test(value)));
+
   // Технології моделі (GORE-TEX, Vibram…) — важливий аргумент вибору. Парсимо
-  // «брудний» рядок у бейджі; лого підхопиться з /tech-logos/<slug>.svg, якщо є.
+  // «брудний» рядок у бейджі; лого — з маніфесту R2 (за слагом або аліасом з BMS).
   const techs = parseTechnologies(product.technology);
+  const logoFor = (t: Tech) => techLogos.find((l) => l.slug === t.slug
+    || l.aliases.includes(t.label.toLowerCase()));
+  const techTerms = techs.filter((t) => hints.tech?.[t.slug]);
+  // «Медалі» на фото — лише технології з лого, до трьох, без дублів
+  const medals = techs.map(logoFor).filter((l, i, all): l is TechLogo => !!l && all.indexOf(l) === i)
+    .slice(0, 3);
 
   // Знижка — ДВА джерела: акційна ціна каталогу (sale_price) АБО «стара» знижена
   // ціна (oldprice > price, скинуто в BMS). Обидві дають −X% і закреслений оригінал.
@@ -523,6 +575,15 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
           title="Скопіювати номер">
           {copied ? 'Скопійовано ✓' : product.productnumber}
         </button>
+        {/* «Медалі» технологій — стовпчиком під номером, однакові плитки. Лише в
+            галереї: у повноекранному перегляді (зум) їх немає, щоб не заважали. */}
+        {medals.length > 0 && (
+          <div className="tech-medals" aria-hidden="true">
+            {medals.map((m) => (
+              <span className="tech-medal" key={m.slug}><img src={m.url} alt="" decoding="async" /></span>
+            ))}
+          </div>
+        )}
         <div className="gallery-track" ref={trackRef} onScroll={handleScroll}>
           {product.images.length > 0 ? product.images.map((img, i) => (
             <div className="gallery-slide" key={img.url}>
@@ -593,7 +654,11 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
 
         {product.size_variants.length > 0 && (
           <div className={`detail-card${sizesFlash ? ' flash' : ''}`} ref={sizesRef}>
-            <h3>{pickable ? 'Оберіть розмір' : 'Розміри в наявності'}</h3>
+            <h3>
+              {pickable ? 'Оберіть розмір' : 'Розміри в наявності'}
+              {hints.sizes && <InfoButton id="sizes" open={hint === 'sizes'} onToggle={toggleHint} label="Про розміри й заміри" />}
+            </h3>
+            {hint === 'sizes' && <p className="hint-text">{hints.sizes}</p>}
             <div className="filter-options">
               {product.size_variants.map((variant) => (
                 pickable ? (
@@ -643,15 +708,24 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
 
         {techs.length > 0 && (
           <div className="detail-card">
-            <h3>Технології</h3>
+            <h3>
+              Технології
+              {techTerms.length > 0 && <InfoButton id="tech" open={hint === 'tech'} onToggle={toggleHint} label="Що дають технології" />}
+            </h3>
+            {hint === 'tech' && (
+              <p className="hint-text">{techTerms.map((t) => <span className="hint-line" key={t.slug}>{hints.tech![t.slug]}</span>)}</p>
+            )}
             <div className="tech-row">
-              {techs.map((t) => (
-                <span className="tech-badge" key={t.slug || t.label} title={t.label}>
-                  <img className="tech-logo" src={`/tech-logos/${t.slug}.svg`} alt=""
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-                  {t.label}
-                </span>
-              ))}
+              {techs.map((t) => {
+                const logo = logoFor(t);
+                return (
+                  <span className="tech-badge" key={t.slug || t.label} title={t.label}>
+                    {logo && <img className="tech-logo" src={logo.url} alt="" decoding="async"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
+                    {t.label}
+                  </span>
+                );
+              })}
             </div>
           </div>
         )}
@@ -659,16 +733,28 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
         <div className="detail-card">
           <h3>Характеристики</h3>
           {specs.filter(([, value]) => value).map(([key, value]) => (
-            <div className="spec-row" key={key}>
-              <span className="spec-key">{key}</span>
-              <span className="spec-val">{capSlash(value)}</span>
-            </div>
+            <React.Fragment key={key}>
+              <div className="spec-row">
+                <span className="spec-key">
+                  {key}
+                  {specHint[key] && <InfoButton id={key} open={hint === key} onToggle={toggleHint} label={`Про: ${key}`} />}
+                </span>
+                <span className="spec-val">{capSlash(value)}</span>
+              </div>
+              {hint === key && specHint[key] && <p className="hint-text">{specHint[key]}</p>}
+            </React.Fragment>
           ))}
         </div>
 
         {materialRows.length > 0 && (
           <div className="detail-card">
-            <h3>Матеріали</h3>
+            <h3>
+              Матеріали
+              {materialTerms.length > 0 && <InfoButton id="materials" open={hint === 'materials'} onToggle={toggleHint} label="Пояснення позначень" />}
+            </h3>
+            {hint === 'materials' && (
+              <p className="hint-text">{materialTerms.map((term) => <span className="hint-line" key={term}>{hints.materials![term]}</span>)}</p>
+            )}
             {materialRows.map(([key, value]) => (
               <div className="spec-row" key={key}>
                 <span className="spec-key">{key}</span>
@@ -690,7 +776,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
 
       {zoomAt !== null && product.images.length > 0 && (
         <Lightbox images={product.images} index={zoomAt} alt={titleText}
-          onClose={() => setZoomAt(null)} />
+          note={hints.photo_note} onClose={() => setZoomAt(null)} />
       )}
 
       {(sellerUsername || sellerPhone || sellerInstagram || sellerViber) && (
@@ -865,6 +951,25 @@ const AdminDiscount = ({ product, auth, onAuthFailure, onSaved }: {
     </div>
   );
 };
+
+// ⓘ-підказка: завжди одразу після назви того, що пояснює (заголовок блоку або рядок).
+// Розгортає тихий текст під цим рядком — без рамок і фону.
+const InfoButton = ({ id, open, onToggle, label }: {
+  id: string; open: boolean; onToggle: (id: string) => void; label: string;
+}) => (
+  <button type="button" className={`hint-btn${open ? ' on' : ''}`} aria-expanded={open}
+    aria-label={label} title={label} onClick={() => onToggle(id)}>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9.2" /><path d="M12 11v5.3" /><path d="M12 7.7v.01" strokeWidth="2.4" />
+    </svg>
+  </button>
+);
+
+const CameraIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" /><circle cx="12" cy="13.2" r="3.4" />
+  </svg>
+);
 
 const ChevronIcon = ({ dir }: { dir: 'left' | 'right' }) => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

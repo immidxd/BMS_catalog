@@ -1613,7 +1613,85 @@ button {
   font-weight: 600;
   letter-spacing: 0.01em;
 }
-.tech-logo { height: 16px; width: auto; max-width: 60px; object-fit: contain; display: block; }
+/* Лого — на білій підкладці, як медалі на фото: файли лого з білим тлом, і в темній
+   темі без підкладки вони лягали б білою плямою */
+.tech-logo {
+  height: 16px; width: auto; max-width: 60px; object-fit: contain; display: block;
+  padding: 2px 4px; border-radius: 4px; background: #ffffff;
+}
+
+/* «Медалі» технологій на фото — стовпчиком під номером товару, плитки однакового
+   розміру (лого вписане всередину), щоб ширші лого не «випирали». Не ловлять дотик:
+   тап по фото, як і раніше, відкриває перегляд. */
+.tech-medals {
+  position: absolute;
+  top: calc(var(--space-3) + 32px);
+  right: var(--space-3);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+.tech-medal {
+  box-sizing: border-box;
+  width: 56px;
+  height: 34px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: #ffffff;   /* лого на білому тлі — як на студійному фото */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tech-medal img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+
+/* ⓘ-підказка: тонкий значок одразу після назви, текст — тихо під рядком, без рамок */
+.hint-btn {
+  position: relative;
+  display: inline-flex;
+  vertical-align: -3px;
+  margin-left: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-faint);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease);
+}
+.hint-btn::after { content: ''; position: absolute; inset: -10px; }   /* зручна зона дотику */
+.hint-btn.on { color: var(--fg); }
+.hint-text {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+.spec-row + .hint-text { margin-top: -2px; }
+.hint-line { display: block; }
+.hint-line + .hint-line { margin-top: 2px; }
+.hint-scale { display: block; margin-top: 2px; color: var(--fg-subtle); }
+.hint-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .hint-btn:hover { color: var(--fg-muted); }
+  .hint-btn.on:hover { color: var(--fg); }
+}
+
+/* Підпис у перегляді фото — другим рядком під підказкою жестів */
+.lightbox-note { display: block; margin-top: 2px; color: rgba(255, 255, 255, 0.6); white-space: normal; }
+.lightbox-hint:has(.lightbox-note) { border-radius: 14px; text-align: center; max-width: calc(100% - 32px); }
 
 /* Картка товару рухається під час свайпу між товарами (transform/opacity задає
    JS у ProductPage). will-change навмисне НЕ тут статично: він створює containing
@@ -1725,6 +1803,8 @@ button {
   .product-sheet .gallery::after { bottom: 0; background: linear-gradient(to top, #ffffff 18%, transparent); }
   /* Номер — зліва на десктопі (модал відступає від краю, кнопка «назад» не заважає) */
   .product-sheet .number-pill { left: var(--space-3); right: auto; }
+  /* Медалі технологій — завжди під номером, тож і вони зліва */
+  .product-sheet .tech-medals { left: var(--space-3); right: auto; }
   /* Крапки на білій панелі — фіксований темний колір (незалежно від теми) */
   .product-sheet .gallery-dots { background: transparent; position: relative; z-index: 3; }
   .product-sheet .dot::before { background: rgba(0, 0, 0, 0.22); }

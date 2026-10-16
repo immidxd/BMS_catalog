@@ -1,6 +1,6 @@
 // TG Shop — каталог: пошук, фільтри, сітка товарів, сторінка товару
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CatalogItem, CatalogQuery, Facets, FilterOptions, ShopInfoSection, fetchConfig, formatPrice, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, syncFavorites } from './api';
+import { CatalogItem, CatalogQuery, Facets, FilterOptions, Hints, ShopInfoSection, TechLogo, fetchConfig, formatPrice, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, syncFavorites } from './api';
 import { HowToBuySheet } from './components/HowToBuySheet';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
 import { ReorderSheet } from './components/ReorderSheet';
@@ -62,6 +62,8 @@ export const App = () => {
   const [tgChannel, setTgChannel] = useState('');
   const [shopName, setShopName] = useState('Каталог');
   const [howToBuy, setHowToBuy] = useState<ShopInfoSection[]>([]);
+  const [hints, setHints] = useState<Hints>({});          // підказки ⓘ картки товару
+  const [techLogos, setTechLogos] = useState<TechLogo[]>([]);
   const [infoOpen, setInfoOpen] = useState(false);   // екран «Як купити»
   const [isAdmin, setIsAdmin] = useState(hasAdminParam);
   const [adminWrites, setAdminWrites] = useState(false);   // чи бекенд дозволяє адмін-запис
@@ -148,6 +150,8 @@ export const App = () => {
       setTgChannel(config.tg_channel || '');
       if (config.shop_name) setShopName(config.shop_name);
       setHowToBuy(config.how_to_buy ?? []);
+      setHints(config.hints ?? {});
+      setTechLogos(config.tech_logos ?? []);
       setAdminWrites(config.admin_writes);
       // Адмін, якщо Telegram ID у allowlist (або вже за ?admin=1)
       if (telegramUserId && config.admin_tg_ids.includes(telegramUserId)) setIsAdmin(true);
@@ -617,6 +621,8 @@ export const App = () => {
           sellerPhone={sellerPhone}
           sellerInstagram={sellerInstagram}
           sellerViber={sellerViber}
+          hints={hints}
+          techLogos={techLogos}
           admin={isAdmin}
           onHowToBuy={howToBuy.length > 0 ? () => setInfoOpen(true) : undefined}
           onBack={() => window.history.back()}   // адресу знімає popstate нижче

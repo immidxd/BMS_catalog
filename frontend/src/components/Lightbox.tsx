@@ -15,6 +15,7 @@ type Props = {
   images: ProductImage[];
   index: number;
   alt: string;
+  note?: string;   // тихий підпис внизу (напр. «розмір на фото може відрізнятися»)
   onClose: () => void;
 };
 
@@ -25,7 +26,7 @@ const DOUBLE_TAP_MS = 300;
 
 type Point = { x: number; y: number };
 
-export const Lightbox = ({ images, index, alt, onClose }: Props) => {
+export const Lightbox = ({ images, index, alt, note, onClose }: Props) => {
   const [current, setCurrent] = useState(index);
   const [zoomed, setZoomed] = useState(false);   // лише для курсора/підказки
   const stageRef = useRef<HTMLDivElement>(null);
@@ -215,6 +216,7 @@ export const Lightbox = ({ images, index, alt, onClose }: Props) => {
       )}
       <div className="lightbox-hint">
         {zoomed ? 'Тягніть, щоб роздивитись' : 'Подвійний тап або щипок — збільшити'}
+        {note && <span className="lightbox-note">{note}</span>}
       </div>
     </div>
   );
