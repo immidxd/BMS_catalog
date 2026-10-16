@@ -200,7 +200,8 @@ export type ShopInfoSection = {
 export type Hints = {
   sizes?: string;
   photo_note?: string;
-  photo_offer?: string;                 // над кнопкою «Запросити реальні фото»
+  photo_offer?: string;                 // перед посиланням «запросити ›»
+  height?: string;                      // біля рядка «Висота»
   condition?: Record<string, string>;   // ключ — назва стану в нижньому регістрі
   width?: Record<string, string>;       // ключ — позначка повноти (F½, G…)
   materials?: Record<string, string>;   // ключ — абревіатура (EVA…)

@@ -540,10 +540,11 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
               {hints.photo_offer}
               {sellerUsername && (
                 <>
-                  {' '}
+                  {/* Одне речення без крапки: «Зробимо живі фото цієї пари — запросити ›» */}
+                  {hints.photo_offer ? ' — ' : ''}
                   <button type="button" className="hint-action" aria-label="Запросити реальні фото"
                     onClick={(e) => { e.stopPropagation(); handlePhotoRequest(); }}>
-                    Запросити<ChevronIcon dir="right" size={13} />
+                    {hints.photo_offer ? 'запросити' : 'Запросити реальні фото'}<ChevronIcon dir="right" size={13} />
                   </button>
                 </>
               )}
@@ -555,6 +556,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     ...(widthHint ? {
       'Повнота': widthHint,
     } : {}),
+    ...(hints.height ? { 'Висота': hints.height } : {}),
   };
 
   // Підпис розміру варіанта: EU → літерний → устілка в см
