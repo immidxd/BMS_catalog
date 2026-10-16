@@ -1,6 +1,6 @@
 // TG Shop — каталог: пошук, фільтри, сітка товарів, сторінка товару
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CatalogItem, CatalogQuery, Facets, FilterOptions, Hints, ShopInfoSection, TechLogo, fetchConfig, formatPrice, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, syncFavorites } from './api';
+import { CatalogItem, CatalogQuery, Facets, FilterOptions, Hints, SeasonChip, ShopInfoSection, TechLogo, fetchConfig, formatPrice, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, syncFavorites } from './api';
 import { HowToBuySheet } from './components/HowToBuySheet';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
 import { ReorderSheet } from './components/ReorderSheet';
@@ -32,13 +32,10 @@ const ADMIN_SORTS = [
   { key: 'popular', label: 'Найпопулярніші', hint: 'Перегляди + лайки разом (♥ важить ×10)' },
 ] as const;
 
-// Сезонні чіпи одним тапом. Підпис для покупця й назва сезону в даних — РІЗНІ:
-// у базі сезон зветься «Демі», але покупцеві в вересні зрозуміліше «Осінь».
-// Чіп показується, лише якщо такий сезон реально є в наявних товарах.
-const SEASON_CHIPS: Array<{ label: string; season: string }> = [
-  { label: 'Осінь', season: 'Демі' },
-  { label: 'Єврозима', season: 'Єврозима' },
-];
+// Сезонні чіпи одним тапом приходять з /api/config (season_chips): календар на
+// бекенді сам міняє їх за місяцем (весна → літо → осінь → зима), ручних правок не
+// треба. Підпис для покупця й сезони в даних — РІЗНІ: «Осінь» = Демі, «Зима» =
+// Зима + Єврозима. Чіп показується, лише якщо такий сезон реально є в наявних товарах.
 
 // Дефолт каталогу: «Тільки з фото» увімкнено за замовчуванням (базовий стан,
 // не рахується як активний фільтр). Скидання повертає саме до цього дефолту.
@@ -65,6 +62,7 @@ export const App = () => {
   const [howToBuy, setHowToBuy] = useState<ShopInfoSection[]>([]);
   const [hints, setHints] = useState<Hints>({});          // підказки ⓘ картки товару
   const [techLogos, setTechLogos] = useState<TechLogo[]>([]);
+  const [seasonChips, setSeasonChips] = useState<SeasonChip[]>([]);
   const [infoOpen, setInfoOpen] = useState(false);   // екран «Як купити»
   const [isAdmin, setIsAdmin] = useState(hasAdminParam);
   const [adminWrites, setAdminWrites] = useState(false);   // чи бекенд дозволяє адмін-запис
@@ -153,6 +151,7 @@ export const App = () => {
       setHowToBuy(config.how_to_buy ?? []);
       setHints(config.hints ?? {});
       setTechLogos(config.tech_logos ?? []);
+      setSeasonChips(config.season_chips ?? []);
       setAdminWrites(config.admin_writes);
       // Адмін, якщо Telegram ID у allowlist (або вже за ?admin=1)
       if (telegramUserId && config.admin_tg_ids.includes(telegramUserId)) setIsAdmin(true);
@@ -366,12 +365,14 @@ export const App = () => {
     } as CatalogQuery));
   };
 
-  // Швидкі чіпи-фільтри одним тапом: тип «Сумки» і сезони (див. SEASON_CHIPS). Id типу беремо
+  // Швидкі чіпи-фільтри одним тапом: тип «Сумки» і сезони (season_chips з конфігу). Id типу беремо
   // з фасетів за назвою (не хардкодимо), тож чіп зникає, якщо сумок немає в наявності.
   const bagType = filterOptions?.types.find((t) => t.name === 'Сумка');
   const bagsActive = !!bagType && query.typeids?.length === 1 && query.typeids[0] === bagType.id;
-  const seasonActive = (season: string) =>
-    query.seasons?.length === 1 && query.seasons[0] === season;
+  // Чіп активний, коли обрано рівно його сезони («Зима» = Зима + Єврозима)
+  const seasonActive = (chip: SeasonChip) =>
+    query.seasons?.length === chip.seasons.length
+    && chip.seasons.every((s) => query.seasons!.includes(s));
   // «Обране» — по суті кошик: або дивимось збережене, або фільтруємо каталог.
   // Тому вмикання «Обраного» скидає звужуючі фільтри, а будь-який чіп-фільтр
   // (Сумки/сезон/Знижки) чи застосування листа фільтрів вимикає «Обране». Інакше
@@ -393,10 +394,10 @@ export const App = () => {
       ? { ...q, typeids: undefined }
       : { ...q, typeids: [bagType.id], eu_sizes: undefined, size_letters: undefined });
   };
-  const toggleSeason = (season: string) => {
+  const toggleSeason = (chip: SeasonChip) => {
     hapticSelect();
     setFavView(false);
-    setQuery((q) => ({ ...q, seasons: seasonActive(season) ? undefined : [season] }));
+    setQuery((q) => ({ ...q, seasons: seasonActive(chip) ? undefined : [...chip.seasons] }));
   };
   const onSaleActive = !!query.on_sale;
   const toggleOnSale = () => {
@@ -497,10 +498,10 @@ export const App = () => {
               Сумки
             </button>
           )}
-          {SEASON_CHIPS.filter((c) => filterOptions?.seasons.includes(c.season)).map((c) => (
-            <button key={c.season} type="button"
-              className={`chip${seasonActive(c.season) ? ' active' : ''}`}
-              onClick={() => toggleSeason(c.season)}>
+          {seasonChips.filter((c) => c.seasons.some((s) => filterOptions?.seasons.includes(s))).map((c) => (
+            <button key={c.label} type="button"
+              className={`chip${seasonActive(c) ? ' active' : ''}`}
+              onClick={() => toggleSeason(c)}>
               {c.label}
             </button>
           ))}

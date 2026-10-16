@@ -533,6 +533,9 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
       'Стан': (
         <>
           {conditionHint}
+          {conditionKey !== 'новий' && hints.photo_offer && (
+            <span className="hint-line hint-offer">{hints.photo_offer}</span>
+          )}
           {conditionKey !== 'новий' && sellerUsername && (
             <button type="button" className="hint-action"
               onClick={(e) => { e.stopPropagation(); handlePhotoRequest(); }}>

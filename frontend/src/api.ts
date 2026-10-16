@@ -200,12 +200,16 @@ export type ShopInfoSection = {
 export type Hints = {
   sizes?: string;
   photo_note?: string;
+  photo_offer?: string;                 // над кнопкою «Запросити реальні фото»
   condition?: Record<string, string>;   // ключ — назва стану в нижньому регістрі
   width?: Record<string, string>;       // ключ — позначка повноти (F½, G…)
   width_scale?: string;
   materials?: Record<string, string>;   // ключ — абревіатура (EVA…)
   tech?: Record<string, string>;        // ключ — слаг технології (techLogos.ts)
 };
+
+// Чіп сезону: підпис для покупця й сезони в даних (календар — backend/catalog.py)
+export type SeasonChip = { label: string; seasons: string[] };
 
 // Лого технології з маніфесту R2 (logos/manifest.json), url — зменшена веб-копія
 export type TechLogo = { slug: string; label: string; aliases: string[]; url: string };
@@ -216,6 +220,7 @@ export const fetchConfig = (): Promise<{
   how_to_buy?: ShopInfoSection[];
   hints?: Hints;
   tech_logos?: TechLogo[];
+  season_chips?: SeasonChip[];
 }> => fetchJson('/api/config');
 
 // ── Адмін-запис публікації (Фаза 2) — захищений: Telegram initData АБО адмін-токен ──

@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from admin import router as admin_router
 from analytics import ensure_analytics_tables, router as analytics_router
 from auth import admin_writes_enabled
-from catalog import router as catalog_router
+from catalog import router as catalog_router, season_chips
 from favorites import router as favorites_router
 from images import URL_PREFIX as IMAGES_URL_PREFIX, get_images_dir
 from logos import tech_logos
@@ -62,6 +62,8 @@ def get_config():
         # Підказки ⓘ картки товару й лого технологій (з R2, без БД)
         "hints": hints(),
         "tech_logos": tech_logos(),
+        # Чіпи сезону на поточний місяць (календар у catalog.py, без БД)
+        "season_chips": season_chips(),
         "admin_tg_ids": admin_ids,
         # Чи доступний адмін-запис публікації (Фаза 2) — щоб фронт знав, чи показувати тумблер
         "admin_writes": admin_writes_enabled(),
