@@ -28,10 +28,13 @@ def tech_logos() -> List[Dict[str, Any]]:
                                      headers={"User-Agent": "Mozilla/5.0 (BMS catalog)"})
         with urllib.request.urlopen(req, timeout=3) as resp:
             manifest = json.load(resp)
+        # ?v= — версія маніфесту: лого кешуються на добу, тож після заміни файлу
+        # досить підняти version у manifest.json, і всі побачать нове одразу
+        ver = manifest.get("version", 1)
         _cache["items"] = [
             {"slug": e["slug"], "label": e["label"],
              "aliases": [a.lower() for a in e.get("aliases", [])],
-             "url": f"{base}/logos/web/{urllib.parse.quote(e['file'])}"}
+             "url": f"{base}/logos/web/{urllib.parse.quote(e['file'])}?v={ver}"}
             for e in manifest.get("tech", [])
         ]
         _cache["at"] = time.time()

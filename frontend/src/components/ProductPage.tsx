@@ -715,17 +715,11 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
             {hint === 'tech' && (
               <p className="hint-text">{techTerms.map((t) => <span className="hint-line" key={t.slug}>{hints.tech![t.slug]}</span>)}</p>
             )}
+            {/* Лише назви: лого вже стоять медалями на фото — двічі те саме виглядало дублем */}
             <div className="tech-row">
-              {techs.map((t) => {
-                const logo = logoFor(t);
-                return (
-                  <span className="tech-badge" key={t.slug || t.label} title={t.label}>
-                    {logo && <img className="tech-logo" src={logo.url} alt="" decoding="async"
-                      onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
-                    {t.label}
-                  </span>
-                );
-              })}
+              {techs.map((t) => (
+                <span className="tech-badge" key={t.slug || t.label} title={t.label}>{t.label}</span>
+              ))}
             </div>
           </div>
         )}
