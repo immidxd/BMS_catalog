@@ -9,7 +9,9 @@
 import math
 import os
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import text
@@ -192,9 +194,12 @@ _SORTS = {
     "price_desc": "MAX(p.price) DESC, MIN(p.id) DESC",
 }
 
-# Сортування ЗОВНІШНЬОГО рівня — над агрегованими по номеру рядками (per_number)
+# Сортування ЗОВНІШНЬОГО рівня — над агрегованими по номеру рядками (per_number).
+# «Новинки» = коли товар ПЕРШИЙ раз з'явився у вітрині (published_at не скидається
+# повторною публікацією): щойно викладене — нагорі. Неопублікованим (їх бачить лише
+# адмін) — дата надходження, щоб свіжі кандидати на публікацію не провалювались униз.
 _OUTER_SORTS = {
-    "newest": "MAX(dateadded) DESC NULLS LAST, MIN(id) DESC",
+    "newest": "MAX(listed_at) DESC NULLS LAST, MIN(id) DESC",
     "price_asc": "MIN(price) ASC, MIN(id) DESC",
     "price_desc": "MAX(price) DESC, MIN(id) DESC",
 }
@@ -227,6 +232,16 @@ _POP_JOINS = """
             FROM catalog_favorite_state GROUP BY productnumber
         ) cf ON cf.productnumber = p.productnumber
 """
+
+
+def _off_seasons() -> List[str]:
+    """Сезони, які зараз (за київським місяцем) не носять. Товар, у якого ВСІ сезони
+    з цього списку (лише «Літо» восени/взимку; лише «Зима»/«Єврозима» навесні/влітку),
+    у сітці «Новинки» йде в кінець — з каталогу не зникає. «Демі» й «Всесезон»
+    доречні завжди, тож такий товар не опускається."""
+    month = datetime.now(ZoneInfo("Europe/Kyiv")).month
+    return ["Зима", "Єврозима"] if 4 <= month <= 8 else ["Літо"]
+
 
 # «Підпис торгової пропозиції» (псевдоніми per_number): бренд+тип+колір+модель+
 # сезон+ціна+стан. За ним різні номери (різні завози ІДЕНТИЧНОГО товару в тому ж
@@ -472,14 +487,17 @@ async def get_catalog(
     # «Рекомендовані» спливають угору лише у дефолтній (кураторській) сітці «Новинки»;
     # при явному сортуванні за ціною поважаємо вибір користувача без піну.
     if sort == "newest":
-        # Рекомендовані — вгорі, у порядку featured_order (адмін перетягує); далі за датою.
-        order_by = "BOOL_OR(featured) DESC, MIN(featured_order) ASC NULLS LAST, " + order_by
+        # Рекомендовані — вгорі, у порядку featured_order (адмін перетягує); далі
+        # сезонні раніше за несезонні (_off_seasons), а всередині — новіші першими.
+        order_by = ("BOOL_OR(featured) DESC, MIN(featured_order) ASC NULLS LAST, "
+                    "BOOL_AND(off_season) ASC, " + order_by)
     group_key = _OFFER_SIG if group_offers else "productnumber"
     where_sql, params = _build_filters(
         search, typeids, subtypeids, brandids, genderids, color_group_ids,
         conditionids, seasons, eu_sizes, size_letters,
         min_price, max_price, min_cm, max_cm, has_photo, only_published, favnums, on_sale,
     )
+    params["off_seasons"] = _off_seasons()
 
     base_sql = f"{_FULL_JOINS}{_POP_JOINS if is_pop else ''} WHERE {_AVAILABLE_WHERE} {where_sql}"
     # Метрики в per_number — лише коли за ними сортуємо (див. _POP_JOINS)
@@ -502,7 +520,13 @@ async def get_catalog(
                    BOOL_OR(COALESCE(cl.is_published, FALSE)) AS published,
                    BOOL_OR(COALESCE(cl.is_on_sale, FALSE)) AS on_sale,
                    MIN(cl.sale_price) AS sale_price,
-                   MIN(cl.featured_order) AS featured_order,
+                   -- Лише для ЧИННИХ рекомендованих: після зняття «Рекомендований»
+                   -- featured_order лишається в рядку й інакше тримав би товар над новинками
+                   MIN(cl.featured_order) FILTER (WHERE cl.is_featured) AS featured_order,
+                   COALESCE(MAX(cl.published_at), MAX(p.dateadded)::timestamptz) AS listed_at,
+                   -- Усі сезони товару зараз не носять (назви сезонів — одним словом)
+                   COALESCE(string_to_array(replace(NULLIF(btrim(MIN(p.season)), ''), ' ', ''), ',')
+                            <@ CAST(:off_seasons AS text[]), FALSE) AS off_season,
                    MIN(p.brandid) AS brandid, MIN(p.typeid) AS typeid, MIN(p.colorid) AS colorid,
                    lower(btrim(coalesce(MIN(p.model), ''))) AS model_key,
                    lower(btrim(coalesce(MIN(p.season), ''))) AS season_key,
