@@ -541,9 +541,9 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
               {sellerUsername && (
                 <>
                   {' '}
-                  <button type="button" className="hint-action"
+                  <button type="button" className="hint-action" aria-label="Запросити реальні фото"
                     onClick={(e) => { e.stopPropagation(); handlePhotoRequest(); }}>
-                    Запросити реальні фото<ChevronIcon dir="right" size={13} />
+                    Запросити<ChevronIcon dir="right" size={13} />
                   </button>
                 </>
               )}
@@ -553,7 +553,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
       ),
     } : {}),
     ...(widthHint ? {
-      'Повнота': <>{widthHint}{hints.width_scale && <span className="hint-scale">{hints.width_scale}</span>}</>,
+      'Повнота': widthHint,
     } : {}),
   };
 
@@ -985,7 +985,7 @@ const InfoButton = ({ id, open, onToggle, label }: {
 );
 
 // Текст підказки: натиск по ньому теж згортає — не треба цілитись у маленький ⓘ.
-// Кнопки всередині (напр. «Запросити реальні фото») зупиняють клік і не згортають.
+// Кнопки всередині (напр. «Запросити» — реальні фото) зупиняють клік і не згортають.
 const HintText = ({ children, onClose }: { children: React.ReactNode; onClose: () => void }) => (
   <p className="hint-text" onClick={onClose}>{children}</p>
 );

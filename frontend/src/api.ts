@@ -203,7 +203,6 @@ export type Hints = {
   photo_offer?: string;                 // над кнопкою «Запросити реальні фото»
   condition?: Record<string, string>;   // ключ — назва стану в нижньому регістрі
   width?: Record<string, string>;       // ключ — позначка повноти (F½, G…)
-  width_scale?: string;
   materials?: Record<string, string>;   // ключ — абревіатура (EVA…)
   tech?: Record<string, string>;        // ключ — слаг технології (techLogos.ts)
 };
