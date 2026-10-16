@@ -980,7 +980,7 @@ function SessionScreen({ box, packInto, toast, onDone, scanResolve }: {
   const packedRef = useRef(new Set<number>());
   const total = useMemo(() => log.filter(l => l.kind === 'ok').length, [log]);
   const lastRef = useRef('');
-  // Без стікера (лише бірка з номером): пошук за номером → вибір розміру → у коробку.
+  // Без стікера (лише етикетка товару з номером): пошук за номером → вибір розміру → у коробку.
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<Product[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -1078,7 +1078,7 @@ function SessionScreen({ box, packInto, toast, onDone, scanResolve }: {
         </div>
         <form className="wh-search" onSubmit={e => { e.preventDefault(); void searchByNumber(); }}>
           <ISearch size={24} />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Без стікера: номер з бірки" inputMode="text" autoCapitalize="characters" autoCorrect="off" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Без стікера: номер з етикетки товару" inputMode="text" autoCapitalize="characters" autoCorrect="off" />
           <button type="submit" disabled={searching || !q.trim()}>{searching ? '…' : 'Покласти'}</button>
         </form>
         {hits && (
@@ -1109,7 +1109,7 @@ function SessionScreen({ box, packInto, toast, onDone, scanResolve }: {
             ))}
           </div></div>
         )}
-        {log.length === 0 && !hits && <div className="wh-hint">«Сканувати» — наводьте камеру на стікери по черзі: після кожного скану на секунду зʼявиться картка «покладено», і камера відкриється знову. Той самий стікер удруге не додається. Без стікера — введіть номер з бірки вище.</div>}
+        {log.length === 0 && !hits && <div className="wh-hint">«Сканувати» — наводьте камеру на стікери по черзі: після кожного скану на секунду зʼявиться картка «покладено», і камера відкриється знову. Той самий стікер удруге не додається. Без стікера — введіть номер з етикетки товару вище.</div>}
       </div>
       {flash && (
         <div className={`wh-flash ${flash.kind}`}>
