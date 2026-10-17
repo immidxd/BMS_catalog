@@ -30,6 +30,19 @@ const storedUuid = (storage: Storage, key: string): string => {
   }
 };
 
+// Пристрій власника: щойно в цьому браузері відкривали адмін-режим (?admin), усі його
+// події позначені «свої» — сервер їх не пише, а давніших не рахує (own_accounts.py).
+// Акаунти Telegram (адміни, BrandStore, персонал) сервер упізнає сам.
+const INTERNAL_KEY = 'bms-catalog-internal-v1';
+const internalDevice = ((): boolean => {
+  try {
+    if (new URLSearchParams(window.location.search).has('admin')) localStorage.setItem(INTERNAL_KEY, '1');
+    return localStorage.getItem(INTERNAL_KEY) === '1';
+  } catch {
+    return false;
+  }
+})();
+
 export const catalogVisitorId = (): string => storedUuid(localStorage, VISITOR_KEY);
 export const catalogSessionId = (): string => storedUuid(sessionStorage, SESSION_KEY);
 
@@ -59,6 +72,7 @@ export const trackCatalogEvent = (
       productnumber,
       metadata,
       user_id: telegramUserId ?? undefined,
+      internal: internalDevice || undefined,
     }),
   }).catch(() => { /* аналітика ніколи не блокує покупку чи навігацію */ });
 };

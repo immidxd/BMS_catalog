@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from analytics import NOT_INTERNAL
 from database import get_db
 from images import GALLERY_IMAGE_WIDTH, list_images, main_image_url, official_photo_productnumbers
 
@@ -222,14 +223,15 @@ _POP_SORTS = {
 # а лайки — з актуального privacy-safe стану відвідувачів.
 # додаткові таблиці (самостворюються на старті), тож звичайні запити каталогу від них
 # не залежать і не ламаються, якщо їх ще немає.
-_POP_JOINS = """
+_POP_JOINS = f"""
         LEFT JOIN (
             SELECT productnumber, COUNT(*) AS views
-            FROM catalog_events WHERE event_type = 'product_view' GROUP BY productnumber
+            FROM catalog_events WHERE event_type = 'product_view' AND {NOT_INTERNAL}
+            GROUP BY productnumber
         ) cv ON cv.productnumber = p.productnumber
         LEFT JOIN (
             SELECT productnumber, COUNT(*) AS fav_count
-            FROM catalog_favorite_state GROUP BY productnumber
+            FROM catalog_favorite_state WHERE {NOT_INTERNAL} GROUP BY productnumber
         ) cf ON cf.productnumber = p.productnumber
 """
 
@@ -655,7 +657,7 @@ async def get_catalog(
                 vr[0]: vr[1] for vr in db.execute(
                     text("SELECT productnumber, COUNT(*) FROM catalog_events "
                          "WHERE event_type='product_view' AND productnumber = ANY(:pns) "
-                         "GROUP BY productnumber"),
+                         f"AND {NOT_INTERNAL} GROUP BY productnumber"),
                     {"pns": [it["productnumber"] for it in items]},
                 ).all()
             }
@@ -670,7 +672,7 @@ async def get_catalog(
             fmap = {
                 fr[0]: fr[1] for fr in db.execute(
                     text("SELECT productnumber, COUNT(*) FROM catalog_favorite_state "
-                         "WHERE productnumber = ANY(:pns) GROUP BY productnumber"),
+                         f"WHERE productnumber = ANY(:pns) AND {NOT_INTERNAL} GROUP BY productnumber"),
                     {"pns": [it["productnumber"] for it in items]},
                 ).all()
             }
@@ -692,7 +694,8 @@ async def get_catalog_views(db: Session = Depends(get_db)):
     """Мапа {productnumber: перегляди} — для «живого» оновлення бейджів у адмін-режимі."""
     try:
         rows = db.execute(text("SELECT productnumber, COUNT(*) AS views FROM catalog_events "
-                               "WHERE event_type='product_view' GROUP BY productnumber")).all()
+                               f"WHERE event_type='product_view' AND {NOT_INTERNAL} "
+                               "GROUP BY productnumber")).all()
         return {"views": {r[0]: int(r[1]) for r in rows}}
     except Exception:
         db.rollback()
@@ -1013,7 +1016,7 @@ async def get_catalog_product(
     try:
         views = db.execute(
             text("SELECT COUNT(*) FROM catalog_events "
-                 "WHERE event_type='product_view' AND productnumber = :pn"),
+                 f"WHERE event_type='product_view' AND productnumber = :pn AND {NOT_INTERNAL}"),
             {"pn": row["productnumber"]},
         ).scalar() or 0
     except Exception:
@@ -1104,7 +1107,7 @@ async def get_catalog_product(
     fav_count = 0
     try:
         fav_count = db.execute(
-            text("SELECT COUNT(*) FROM catalog_favorite_state WHERE productnumber = :pn"),
+            text(f"SELECT COUNT(*) FROM catalog_favorite_state WHERE productnumber = :pn AND {NOT_INTERNAL}"),
             {"pn": row["productnumber"]},
         ).scalar() or 0
     except Exception:

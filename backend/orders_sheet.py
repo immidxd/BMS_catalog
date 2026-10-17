@@ -366,16 +366,10 @@ def _row_key(tg_user_id: int) -> str:
 
 # Власні акаунти магазину: їхні «Замовити» — тести власника, а не замовлення, і в
 # живий документ потрапляти не мають. 7293475623 — BrandStoreua (визначено 2026-10-17
-# за ключем тестового рядка «Замовлень»). Адміни з ADMIN_TG_IDS — завжди; інші
-# акаунти (менеджер тощо) — без деплою, через env CATALOG_ORDER_SKIP_TG_IDS (через кому).
-_OWN_ACCOUNTS = {7293475623}
-
-
-def is_own_account(tg_user_id: int) -> bool:
-    ids = set(_OWN_ACCOUNTS)
-    for var in ("ADMIN_TG_IDS", "CATALOG_ORDER_SKIP_TG_IDS"):
-        ids |= {int(x) for x in os.getenv(var, "").replace(" ", "").split(",") if x.isdigit()}
-    return int(tg_user_id) in ids
+# за ключем тестового рядка «Замовлень»). Адміни з ADMIN_TG_IDS і персонал складу —
+# завжди; інші акаунти (менеджер тощо) — без деплою, через env CATALOG_ORDER_SKIP_TG_IDS.
+# Той самий список прибирає їх і зі статистики — див. own_accounts.py.
+from own_accounts import is_own as is_own_account  # noqa: E402
 
 
 def place_order(tg_user_id: int, productnumber: str, size: Optional[str],

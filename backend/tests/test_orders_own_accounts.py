@@ -51,3 +51,9 @@ def test_extra_skip_list_from_env(monkeypatch):
 @pytest.mark.parametrize("uid", [123456789, 7872798351])
 def test_real_buyer_goes_on(monkeypatch, uid):
     assert _reaches_db(monkeypatch, uid, ADMIN_TG_IDS="766150893")
+
+
+def test_warehouse_staff_is_skipped(monkeypatch):
+    # Персонал складу (wh_staff, активний) — свої: працюють із товаром, а не купують
+    monkeypatch.setitem(sys.modules, "warehouse", types.SimpleNamespace(_staff_ids=lambda: {4242}))
+    assert not _reaches_db(monkeypatch, 4242)

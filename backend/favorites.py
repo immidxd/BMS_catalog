@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from auth import telegram_user_from_init_data
 from database import get_db
-from analytics import visitor_key
+from analytics import NOT_INTERNAL, visitor_key
 
 router = APIRouter()
 
@@ -94,7 +94,8 @@ async def toggle_favorite(
         ), {"key": key, "pn": pnum})
     db.commit()
     count = db.execute(
-        text("SELECT COUNT(*) FROM catalog_favorite_state WHERE productnumber = :pn"), {"pn": pnum}
+        text(f"SELECT COUNT(*) FROM catalog_favorite_state WHERE productnumber = :pn AND {NOT_INTERNAL}"),
+        {"pn": pnum}
     ).scalar() or 0
     return {"productnumber": pnum, "favorite": favorite, "fav_count": int(count)}
 
@@ -144,7 +145,7 @@ async def sync_favorites(
         db.commit()
         rows = db.execute(text(
             "SELECT productnumber, COUNT(*) FROM catalog_favorite_state "
-            "WHERE productnumber = ANY(:pns) GROUP BY productnumber"
+            f"WHERE productnumber = ANY(:pns) AND {NOT_INTERNAL} GROUP BY productnumber"
         ), {"pns": pns}).all()
         return {"counts": {r[0]: int(r[1]) for r in rows}}
     db.commit()

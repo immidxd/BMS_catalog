@@ -61,6 +61,14 @@ def _ensure_local(cur) -> None:
             synced_at timestamptz NOT NULL DEFAULT now()
         )
     """)
+    # Свої акаунти (адміни, BrandStore, персонал складу) — ключі з реєстру каталогу
+    # (backend/analytics.py). BMS рахує статистику БЕЗ їхніх подій. Лише доповнюємо.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS catalog_internal_visitors (
+            visitor_key char(64) PRIMARY KEY,
+            added_at timestamptz NOT NULL DEFAULT now()
+        )
+    """)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS catalog_analytics_sync_state (
             source varchar(40) PRIMARY KEY,
@@ -115,9 +123,24 @@ def sync_once(cloud_url: str, local_dsn: dict, acquire_lock: bool = True) -> dic
                 VALUES %s ON CONFLICT (event_id) DO NOTHING
             """, [(*r[:5], Json(r[5] or {}), r[6], r[7]) for r in events])
 
-        cc.execute("""
+        # Реєстру в хмарі ще може не бути (каталог до деплою) — тоді рахуємо як раніше
+        cc.execute("SELECT to_regclass('public.catalog_internal_visitors') IS NOT NULL")
+        has_registry = cc.fetchone()[0]
+        internal = []
+        if has_registry:
+            cc.execute("SELECT visitor_key, added_at FROM catalog_internal_visitors")
+            internal = cc.fetchall()
+        if internal:
+            execute_values(lc, """
+                INSERT INTO catalog_internal_visitors (visitor_key, added_at)
+                VALUES %s ON CONFLICT (visitor_key) DO NOTHING
+            """, internal)
+
+        cc.execute(f"""
             SELECT productnumber, COUNT(*)::integer
-            FROM catalog_favorite_state GROUP BY productnumber
+            FROM catalog_favorite_state
+            {"WHERE visitor_key NOT IN (SELECT visitor_key FROM catalog_internal_visitors)" if has_registry else ""}
+            GROUP BY productnumber
         """)
         favorites = dict(cc.fetchall())
         cc.execute("SELECT productnumber, views::integer FROM catalog_views")
@@ -148,7 +171,7 @@ def sync_once(cloud_url: str, local_dsn: dict, acquire_lock: bool = True) -> dic
         """, (latest, total))
         local.commit()
         return {"skipped": False, "events_received": len(events), "events_total": total,
-                "favorite_products": len(favorites)}
+                "favorite_products": len(favorites), "internal_visitors": len(internal)}
     except Exception as exc:
         local.rollback()
         try:

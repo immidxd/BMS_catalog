@@ -21,8 +21,16 @@ from sqlalchemy.orm import Session
 from auth import telegram_profile_from_init_data, telegram_user_from_init_data
 from database import get_db
 import orders_sheet
+import own_accounts
 
 router = APIRouter()
+
+# Свої (own_accounts.py: адміни, BrandStore, персонал складу, пристрій власника) — не
+# покупці. Їхніх нових подій не пишемо, а ключі тримаємо в реєстрі
+# catalog_internal_visitors: за ним і СТАРІ події не рахуються — тут, у BMS (синхрон
+# аналітики) і в Топ-9. У реєстрі лише ключі, без Telegram ID — як і в подіях.
+NOT_INTERNAL = "visitor_key NOT IN (SELECT visitor_key FROM catalog_internal_visitors)"
+_registered: set = set()   # уже записані ключі — щоб не писати в БД щоразу
 
 EVENT_TYPES = {
     "catalog_open",
@@ -42,6 +50,20 @@ def _secret() -> bytes:
         or "catalog-analytics-local-fallback"
     )
     return value.encode("utf-8")
+
+
+def _key(source: str) -> str:
+    return hmac.new(_secret(), source.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def register_internal(db: Session, key: str) -> None:
+    """Позначити відвідувача «своїм» (без commit — його робить той, хто кличе)."""
+    if key in _registered:
+        return
+    db.execute(text("""
+        INSERT INTO catalog_internal_visitors (visitor_key) VALUES (:k) ON CONFLICT DO NOTHING
+    """), {"k": key})
+    _registered.add(key)
 
 
 def _valid_uuid(value: Optional[str]) -> Optional[str]:
@@ -68,7 +90,7 @@ def visitor_key(
         if not anon:
             raise HTTPException(status_code=400, detail="Немає ідентифікатора відвідувача")
         source = f"anon:{anon}"
-    return hmac.new(_secret(), source.encode("utf-8"), hashlib.sha256).hexdigest()
+    return _key(source)
 
 
 def ensure_analytics_tables(db: Session) -> None:
@@ -128,11 +150,21 @@ def ensure_analytics_tables(db: Session) -> None:
             "SELECT telegram_user_id, productnumber FROM catalog_favorites"
         )).all()
         for uid, pnum in legacy:
-            key = hmac.new(_secret(), f"tg:{uid}".encode("utf-8"), hashlib.sha256).hexdigest()
             db.execute(text("""
                 INSERT INTO catalog_favorite_state (visitor_key, productnumber)
                 VALUES (:key, :pn) ON CONFLICT DO NOTHING
-            """), {"key": key, "pn": pnum})
+            """), {"key": _key(f"tg:{uid}"), "pn": pnum})
+    db.execute(text("""
+        CREATE TABLE IF NOT EXISTS catalog_internal_visitors (
+            visitor_key char(64) PRIMARY KEY,
+            added_at timestamptz NOT NULL DEFAULT now()
+        )
+    """))
+    # Відомі свої — одразу, не чекаючи їхнього наступного візиту (минуле теж не
+    # рахуємо). Без справжнього секрету ключі не збіглися б з подіями — не пишемо.
+    if _secret() != b"catalog-analytics-local-fallback":
+        for uid in own_accounts.own_ids():
+            register_internal(db, _key(f"tg:{uid}"))
     db.commit()
 
 
@@ -175,6 +207,15 @@ async def record_event(
         raise HTTPException(status_code=400, detail="Для події потрібен номер товару")
 
     key = visitor_key(x_telegram_init_data, payload.get("user_id"), x_catalog_visitor)
+    # Свій акаунт або пристрій власника (internal ставить фронт після адмін-режиму):
+    # подію не пишемо, а ключ — у реєстр, щоб і давніші події цього відвідувача не рахувались
+    uid = telegram_user_from_init_data(x_telegram_init_data or "")
+    if uid is None and isinstance(payload.get("user_id"), int):
+        uid = payload["user_id"]
+    if payload.get("internal") is True or (uid is not None and own_accounts.is_own(uid)):
+        register_internal(db, key)
+        db.commit()
+        return {"accepted": False}
     meta = _clean_metadata(event_type, payload.get("metadata"))
 
     inserted = db.execute(text("""
