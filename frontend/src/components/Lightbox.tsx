@@ -215,7 +215,7 @@ export const Lightbox = ({ images, index, alt, note, onClose }: Props) => {
         </>
       )}
       <div className="lightbox-hint">
-        {zoomed ? 'Тягніть, щоб роздивитись' : 'Подвійний тап або щипок — збільшити'}
+        {zoomed ? 'Тягніть, щоб роздивитись' : 'Подвійний тап або щипок, щоб збільшити'}
         {note && <span className="lightbox-note">{note}</span>}
       </div>
     </div>

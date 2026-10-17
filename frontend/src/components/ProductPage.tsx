@@ -462,7 +462,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     haptic('light');
     const chosen = product.size_variants.find((v) => v.id === sizeId);
     contactSeller(sellerUsername, `Вітаю! Прошу зробити реальні фото товару ${product.productnumber}`
-      + ` — ${titleText}${chosen ? `, ${variantLabel(chosen)}` : ''}.`);
+      + `, ${titleText}${chosen ? `, ${variantLabel(chosen)}` : ''}.`);
   };
 
   // ♥️ на сторінці товару: перемикаємо обране й оновлюємо лічильник у стані картки
@@ -580,11 +580,11 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
               {hints.photo_offer}
               {sellerUsername && (
                 <>
-                  {/* Одне речення без крапки: «Зробимо живі фото цієї пари — запросити ›» */}
-                  {hints.photo_offer ? ' — ' : ''}
+                  {/* «Зробимо живі фото цієї пари. Запросити ›» — дві фрази, без тире */}
+                  {hints.photo_offer ? '. ' : ''}
                   <button type="button" className="hint-action" aria-label="Запросити реальні фото"
                     onClick={(e) => { e.stopPropagation(); handlePhotoRequest(); }}>
-                    {hints.photo_offer ? 'запросити' : 'Запросити реальні фото'}<ChevronIcon dir="right" size={13} />
+                    {hints.photo_offer ? 'Запросити' : 'Запросити реальні фото'}<ChevronIcon dir="right" size={13} />
                   </button>
                 </>
               )}
@@ -692,7 +692,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
               {subtitle && <div className="product-brand">{subtitle}</div>}
               {marking && (
                 <button type="button" className="product-marking" onClick={handleCopyMarking}
-                  title="Артикул виробника — скопіювати">
+                  title="Скопіювати артикул виробника">
                   {markingCopied ? 'Скопійовано ✓' : <>арт. <span className="marking-code">{marking}</span></>}
                 </button>
               )}
