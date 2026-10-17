@@ -79,7 +79,7 @@ export const HowToBuySheet = ({ sections, sellerUsername, onClose }: Props) => {
           ))}
           {sellerUsername && (
             <p className="info-tail">
-              Лишилось питання — просто напишіть менеджеру, відповімо.
+              Лишилось питання — просто напишіть менеджеру, відповімо
             </p>
           )}
         </div>
