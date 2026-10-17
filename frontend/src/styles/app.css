@@ -1629,6 +1629,14 @@ button {
 .spec-row:first-of-type { border-top: none; }
 .spec-key { color: var(--fg-subtle); flex-shrink: 0; }
 .spec-val { text-align: right; }
+/* Іконки сезонів біля «Сезон» — розміром як ⓘ, ледь сезонний колір */
+.season-part { white-space: nowrap; }
+.season-icon { display: inline-block; vertical-align: -2px; margin-right: 5px; opacity: 0.85; }
+.s-зима { color: #5aa9e6; }
+.s-єврозима { color: #7fa7c9; }
+.s-демі { color: #8a9a4a; }
+.s-літо { color: #e8a33d; }
+.s-всесезон { color: var(--fg-subtle); }
 /* Кружечок кольору біля «Колір»: розміром як ⓘ (12 px), тонка обвідка — щоб білий і
    чорний не губились на фоні будь-якої теми */
 .color-dot {

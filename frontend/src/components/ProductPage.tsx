@@ -9,6 +9,7 @@ import { hintSeen, markHintSeen, touchUi } from '../onboarding';
 import { colorDotBackground } from '../colorDot';
 import { Lightbox } from './Lightbox';
 import { SizeSheet } from './SizeSheet';
+import { SeasonValue } from './SeasonIcon';
 import { trackCatalogEvent } from '../analytics';
 
 type Props = {
@@ -919,7 +920,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
                 </span>
                 <span className="spec-val">
                   {key === 'Колір' && colorDot && <span className="color-dot" style={{ background: colorDot }} aria-hidden="true" />}
-                  {capSlash(value)}
+                  {key === 'Сезон' && value ? <SeasonValue text={capSlash(value) ?? value} /> : capSlash(value)}
                 </span>
               </div>
               {hint === key && specHint[key] && <HintText onClose={closeHint}>{specHint[key]}</HintText>}
