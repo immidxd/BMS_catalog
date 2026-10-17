@@ -934,7 +934,7 @@ async def get_catalog_product(
                    p.brandid, p.typeid, p.colorid,
                    COALESCE(p.current_conditionid, p.conditionid) AS sig_cond,
                    p.price, p.oldprice, p.sizeeu, p.sizeua, p.measurementscm,
-                   p.size_letter, p.season, p.year, p.width, p.dimensions,
+                   p.size_letter, p.season, p.year, p.width, p.dimensions, p.marking,
                    p.measurements_length_min, p.measurements_length_max,
                    p.measurements_height_min, p.measurements_height_max,
                    p.measurements_heel_min, p.measurements_heel_max,

@@ -1555,6 +1555,29 @@ button {
   color: var(--fg-subtle);
 }
 .product-title { font-size: var(--text-xl); font-weight: 600; margin: 2px 0 6px; line-height: 1.3; }
+/* Рядок над назвою: тип/стать зліва, артикул навпроти — дрібно, приглушено, код моноширинним
+   (як маркування на етикетці). Довгий артикул на вузькому екрані переноситься під тип. */
+.product-overline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px var(--space-3);
+}
+.product-marking {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--text-xs);
+  color: var(--fg-subtle);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.marking-code { font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace); letter-spacing: 0.2px; color: var(--fg-muted); }
+@media (hover: hover) and (pointer: fine) {
+  .product-marking:hover .marking-code { color: var(--fg); }
+}
 .product-number { font-size: var(--text-sm); color: var(--fg-subtle); }
 .product-price { font-size: 22px; }
 

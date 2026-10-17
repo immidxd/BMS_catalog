@@ -60,6 +60,7 @@ export type ProductDetail = {
   id: number;
   productnumber: string;
   model: string | null;
+  marking?: string | null;   // артикул виробника (маркування з етикетки)
   price: number;
   oldprice: number | null;
   sizeeu: string | null;

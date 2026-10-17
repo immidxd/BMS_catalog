@@ -366,6 +366,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   const toggleHint = (id: string) => { haptic('light'); setHint((h) => (h === id ? null : id)); };
   const closeHint = () => { haptic('light'); setHint(null); };
   const [copied, setCopied] = useState(false);
+  const [markingCopied, setMarkingCopied] = useState(false);   // «Скопійовано ✓» на артикулі
   const [shared, setShared] = useState(false);   // «Скопійовано ✓» після поділитися
   const [zoomAt, setZoomAt] = useState<number | null>(null);   // відкрите фото в переглядачі
   const trackRef = useRef<HTMLDivElement>(null);
@@ -494,6 +495,17 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
       fallback();
       done();
     }
+  };
+
+  // Артикул виробника: показуємо, лише якщо він не повторює назву моделі (EA7, Badura 8108…)
+  const norm = (v: string | null | undefined) => (v ?? '').toLowerCase().replace(/[\s\-_./]/g, '');
+  const marking = product.marking?.trim() && norm(product.marking) !== norm(product.model)
+    ? product.marking.trim() : null;
+  // Копіювання артикула — щоб покупець міг знайти модель і переконатися в оригінальності
+  const handleCopyMarking = () => {
+    if (!marking) return;
+    const done = () => { haptic('light'); setMarkingCopied(true); setTimeout(() => setMarkingCopied(false), 1500); };
+    navigator.clipboard?.writeText(marking).then(done).catch(done);
   };
 
   // Назва = бренд + модель (напр. «Ecco Street 720»)
@@ -674,7 +686,18 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
       <div className="product-side">
       <div className="product-info">
         <div className="product-header">
-          {subtitle && <div className="product-brand">{subtitle}</div>}
+          {/* Тип/стать і навпроти — артикул виробника: рядок уже є, висоти не додає */}
+          {(subtitle || marking) && (
+            <div className="product-overline">
+              {subtitle && <div className="product-brand">{subtitle}</div>}
+              {marking && (
+                <button type="button" className="product-marking" onClick={handleCopyMarking}
+                  title="Артикул виробника — скопіювати">
+                  {markingCopied ? 'Скопійовано ✓' : <>арт. <span className="marking-code">{marking}</span></>}
+                </button>
+              )}
+            </div>
+          )}
           <h1 className="product-title">{titleText}</h1>
           <div className="price-row">
             <span className={`price product-price${onSale ? ' sale' : ''}`}>{formatPrice(shownPrice)}</span>
