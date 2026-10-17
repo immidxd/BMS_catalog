@@ -883,19 +883,25 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
 
         {techs.length > 0 && (
           <div className="detail-card">
-            <h3>
-              Технології
-              {techTerms.length > 0 && <InfoButton id="tech" open={hint === 'tech'} onToggle={toggleHint} label="Що дають технології" />}
-            </h3>
-            {hint === 'tech' && (
-              <HintText onClose={closeHint}>{techTerms.map((t) => <span className="hint-line" key={t.slug}>{hints.tech![t.slug]}</span>)}</HintText>
-            )}
-            {/* Лише назви: лого вже стоять медалями на фото — двічі те саме виглядало дублем */}
+            <h3>Технології</h3>
+            {/* Лише назви: лого вже стоять медалями на фото — двічі те саме виглядало дублем.
+                У кожної технології з описом — свій ⓘ (тап по всьому бейджу); відкрита завжди
+                одна підказка: інша технологія плавно заміняє її на тому самому місці під рядом. */}
             <div className="tech-row">
-              {techs.map((t) => (
+              {techs.map((t) => (techTerms.includes(t) ? (
+                <button type="button" key={t.slug || t.label}
+                  className={`tech-badge has-hint${hint === `tech:${t.slug}` ? ' on' : ''}`}
+                  aria-expanded={hint === `tech:${t.slug}`} title={`Що таке ${t.label}`}
+                  onClick={() => toggleHint(`tech:${t.slug}`)}>
+                  {t.label}<InfoIcon />
+                </button>
+              ) : (
                 <span className="tech-badge" key={t.slug || t.label} title={t.label}>{t.label}</span>
-              ))}
+              )))}
             </div>
+            {techTerms.filter((t) => hint === `tech:${t.slug}`).map((t) => (
+              <HintText key={t.slug} onClose={closeHint}>{hints.tech![t.slug]}</HintText>
+            ))}
           </div>
         )}
 
@@ -1135,10 +1141,14 @@ const InfoButton = ({ id, open, onToggle, label, alert = false }: {
 }) => (
   <button type="button" className={`hint-btn${open ? ' on' : ''}${alert ? ' alert' : ''}`} aria-expanded={open}
     aria-label={label} title={label} onClick={() => onToggle(id)}>
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="9.2" /><path d="M12 11v5.3" /><path d="M12 7.7v.01" strokeWidth="2.4" />
-    </svg>
+    <InfoIcon />
   </button>
+);
+
+const InfoIcon = () => (
+  <svg className="info-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="9.2" /><path d="M12 11v5.3" /><path d="M12 7.7v.01" strokeWidth="2.4" />
+  </svg>
 );
 
 // Текст підказки: натиск по ньому теж згортає — не треба цілитись у маленький ⓘ.

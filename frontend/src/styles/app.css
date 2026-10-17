@@ -1802,6 +1802,17 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 .spec-row + .hint-text { margin-top: -2px; }
+/* Підказка з'являється м'яко; заміна іншою (технології) — нова проявляється на тому ж місці */
+.hint-text { animation: hint-in var(--dur-med) var(--ease) both; }
+@keyframes hint-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .hint-text { animation: none; } }
+.tech-row + .hint-text { margin: var(--space-3) 0 0; }
+/* Технологія з описом — бейдж-кнопка з ⓘ; відкрита — ⓘ і рамка яскравіші */
+.tech-badge.has-hint { cursor: pointer; color: inherit; font: inherit; font-size: var(--text-sm); font-weight: 600;
+  -webkit-tap-highlight-color: transparent; transition: border-color var(--dur-fast) var(--ease); }
+.tech-badge .info-icon { color: var(--fg-faint); margin-right: -3px; transition: color var(--dur-fast) var(--ease); }
+.tech-badge.has-hint.on { border-color: var(--fg-subtle); }
+.tech-badge.has-hint.on .info-icon { color: var(--fg); }
 /* Примітки всередині підказки — дрібніше: червона (уточнюйте) і помаранчева (зверніть увагу) */
 .hint-alert, .hint-note { margin-top: 4px; font-size: var(--text-xs); line-height: 1.4; }
 .hint-alert { color: var(--danger); }
