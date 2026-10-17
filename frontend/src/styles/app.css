@@ -1709,13 +1709,13 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 .spec-row + .hint-text { margin-top: -2px; }
-/* Дрібне червоне застереження під рядком (напр. під Н/О халяви) — завжди видиме */
-.spec-warning {
-  margin: -2px 0 var(--space-2);
-  font-size: var(--text-xs);
-  line-height: 1.4;
-  color: var(--danger);
-}
+/* Примітки всередині підказки — дрібніше: червона (уточнюйте) і помаранчева (зверніть увагу) */
+.hint-alert, .hint-note { margin-top: 4px; font-size: var(--text-xs); line-height: 1.4; }
+.hint-alert { color: var(--danger); }
+.hint-note { color: var(--warning); }
+/* ⓘ з червоним застереженням усередині — ледь червоний, розгорнутий — повністю */
+.hint-btn.alert { color: var(--danger); opacity: 0.55; }
+.hint-btn.alert.on { opacity: 1; }
 .hint-line { display: block; }
 .hint-line + .hint-line { margin-top: 2px; }
 .hint-offer { margin-top: 4px; }

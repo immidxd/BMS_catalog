@@ -207,10 +207,12 @@ export type Hints = {
   photo_note?: string;
   photo_offer?: string;                 // перед посиланням «запросити ›»
   height?: string;                      // біля рядка «Висота»
-  shaft_bottom?: string;                // Н/О халяви внизу
-  shaft_top?: string;                   // Н/О халяви вгорі
+  sizes_note?: string;                  // окремим помаранчевим рядком під sizes
+  shaft_bottom?: string;                // Н/О щиколотки
+  shaft_calf?: string;                  // Н/О литки (чоботи)
+  shaft_top?: string;                   // Н/О верху халяви (черевики)
   shaft?: string;                       // Н/О халяви (один замір)
-  shaft_warning?: string;               // червоний рядок під Н/О
+  shaft_warning?: string;               // червоний рядок у підказках Н/О
   insole_width?: string;                // біля «Ширина устілки»
   condition?: Record<string, string>;   // ключ — назва стану в нижньому регістрі
   width?: Record<string, string>;       // ключ — позначка повноти (F½, G…)

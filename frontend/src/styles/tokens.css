@@ -29,6 +29,7 @@
   /* ---------- Семантика (з BMS) ---------- */
   --success:       #52c41a;   /* ціна */
   --danger:        #f5222d;
+  --warning:       #b45309;   /* «зверніть увагу» — помаранчевий з контрастом ~5:1 на білому */
 
   /* ---------- Тіні ---------- */
   --shadow-sm:     0 2px 4px rgba(0, 0, 0, 0.10);
@@ -66,6 +67,7 @@
 
 /* ---------- Темна тема ---------- */
 [data-theme='dark'] {
+  --warning:     #f09a3e;
   --primary:     var(--tg-theme-text-color, #ffffff);
   --on-primary:  var(--tg-theme-bg-color, #1e1e1e);
 

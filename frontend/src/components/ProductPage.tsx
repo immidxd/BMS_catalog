@@ -516,10 +516,13 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   // заміри — два рядки (низ/верх), щоб не плутати; один чи однакові — один рядок.
   const half = (v: number | null | undefined) => (v == null ? null : `${+(v / 2).toFixed(1)} см`);
   const sMin = product.measurements_shaft_circumference_min, sMax = product.measurements_shaft_circumference_max;
+  // Назва — за частиною ноги (так зрозуміліше покупцю): низ — щиколотка; верх — литка
+  // в чобіт/напівчобіт, а в черевиків халява до литки не доходить — там «верху халяви».
+  const tallBoot = /сапог|чобот|ботфорт/i.test(`${product.typename ?? ''} ${product.subtypename ?? ''}`);
+  const topLabel = tallBoot ? 'Н/О литки' : 'Н/О верху халяви';
   const shaftRows: Array<[string, string | null]> = sMin != null && sMax != null && sMin !== sMax
-    ? [['Н/О халяви внизу', half(sMin)], ['Н/О халяви вгорі', half(sMax)]]
+    ? [['Н/О щиколотки', half(sMin)], [topLabel, half(sMax)]]
     : [['Н/О халяви', half(sMin ?? sMax)]];
-  const lastShaftKey = [...shaftRows].reverse().find(([, v]) => v)?.[0];
   const specs: Array<[string, string | null]> = [
     ['Підвид', product.subtypename],
     ['Стиль', product.stylename],
@@ -536,6 +539,20 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     ['Ширина устілки', rangeCm(product.measurements_insole_width_min ?? null, product.measurements_insole_width_max ?? null)],
     ['Рік', product.year ? String(product.year) : null],
   ];
+  // Підказки Н/О: опис + червоне застереження в КОЖНІЙ (замір могли зняти з іншого розміру)
+  const shaftText: Record<string, string | undefined> = {
+    'Н/О щиколотки': hints.shaft_bottom, 'Н/О литки': hints.shaft_calf,
+    'Н/О верху халяви': hints.shaft_top, 'Н/О халяви': hints.shaft,
+  };
+  const shaftHints: Record<string, React.ReactNode> = Object.fromEntries(shaftRows
+    .filter(([key, value]) => value && shaftText[key])
+    .map(([key]) => [key, (
+      <>
+        {shaftText[key]}
+        {hints.shaft_warning && <span className="hint-line hint-alert">{hints.shaft_warning}</span>}
+      </>
+    )]));
+  const alertKeys = new Set(hints.shaft_warning ? Object.keys(shaftHints) : []);
   // Підказки до рядків характеристик (лише де є що пояснити)
   const conditionHint = hints.condition?.[conditionKey];
   const widthHint = width ? hints.width?.[width] : undefined;
@@ -568,9 +585,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
       'Повнота': widthHint,
     } : {}),
     ...(hints.height ? { 'Висота': hints.height } : {}),
-    ...(hints.shaft_bottom ? { 'Н/О халяви внизу': hints.shaft_bottom } : {}),
-    ...(hints.shaft_top ? { 'Н/О халяви вгорі': hints.shaft_top } : {}),
-    ...(hints.shaft ? { 'Н/О халяви': hints.shaft } : {}),
+    ...shaftHints,
     ...(hints.insole_width ? { 'Ширина устілки': hints.insole_width } : {}),
   };
 
@@ -700,7 +715,12 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
               {pickable ? 'Оберіть розмір' : 'Розміри в наявності'}
               {hints.sizes && <InfoButton id="sizes" open={hint === 'sizes'} onToggle={toggleHint} label="Про розміри й заміри" />}
             </h3>
-            {hint === 'sizes' && <HintText onClose={closeHint}>{hints.sizes}</HintText>}
+            {hint === 'sizes' && (
+              <HintText onClose={closeHint}>
+                {hints.sizes}
+                {hints.sizes_note && <span className="hint-line hint-note">{hints.sizes_note}</span>}
+              </HintText>
+            )}
             <div className="filter-options">
               {product.size_variants.map((variant) => (
                 pickable ? (
@@ -773,13 +793,12 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
               <div className="spec-row">
                 <span className="spec-key">
                   {key}
-                  {specHint[key] && <InfoButton id={key} open={hint === key} onToggle={toggleHint} label={`Про: ${key}`} />}
+                  {specHint[key] && <InfoButton id={key} open={hint === key} onToggle={toggleHint} label={`Про: ${key}`}
+                    alert={alertKeys.has(key)} />}
                 </span>
                 <span className="spec-val">{capSlash(value)}</span>
               </div>
               {hint === key && specHint[key] && <HintText onClose={closeHint}>{specHint[key]}</HintText>}
-              {/* Під заміром халяви — завжди видиме застереження: заміри могли бути з іншого розміру */}
-              {key === lastShaftKey && hints.shaft_warning && <p className="spec-warning">{hints.shaft_warning}</p>}
             </React.Fragment>
           ))}
         </div>
@@ -992,10 +1011,11 @@ const AdminDiscount = ({ product, auth, onAuthFailure, onSaved }: {
 
 // ⓘ-підказка: завжди одразу після назви того, що пояснює (заголовок блоку або рядок).
 // Розгортає тихий текст під цим рядком — без рамок і фону.
-const InfoButton = ({ id, open, onToggle, label }: {
+const InfoButton = ({ id, open, onToggle, label, alert = false }: {
   id: string; open: boolean; onToggle: (id: string) => void; label: string;
+  alert?: boolean;   // у підказці є червоне застереження — значок теж ледь червоний
 }) => (
-  <button type="button" className={`hint-btn${open ? ' on' : ''}`} aria-expanded={open}
+  <button type="button" className={`hint-btn${open ? ' on' : ''}${alert ? ' alert' : ''}`} aria-expanded={open}
     aria-label={label} title={label} onClick={() => onToggle(id)}>
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
       <circle cx="12" cy="12" r="9.2" /><path d="M12 11v5.3" /><path d="M12 7.7v.01" strokeWidth="2.4" />
