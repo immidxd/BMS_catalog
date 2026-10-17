@@ -5,6 +5,7 @@ import { AdminAuth, Hints, ProductDetail, TechLogo, cap, capSlash, discountPct, 
 import { Tech, parseTechnologies } from '../techLogos';
 import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, shareViaTelegram, showBackButton } from '../telegram';
 import { productUrl } from '../deepLink';
+import { hintSeen, markHintSeen, touchUi } from '../onboarding';
 import { Lightbox } from './Lightbox';
 import { trackCatalogEvent } from '../analytics';
 
@@ -60,6 +61,9 @@ const rangeCm = (min: number | null, max: number | null): string | null => {
 const SWIPE_GAP = 12;
 const SWIPE_EASE = 'cubic-bezier(.22,.61,.36,1)';
 
+// Куди можна гортати з цієї картки — для підказки новачкам
+type SwipeDir = 'both' | 'next' | 'prev';
+
 export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore, isFavorite, onToggleFav, adminAuth, onAdminAuthFailure, sellerUsername, sellerPhone, sellerInstagram, sellerViber, hints = {}, techLogos = [], onHowToBuy, admin = false, onBack }: Props) => {
   const [error, setError] = useState(false);
   const [, bump] = useState(0);                    // ререндер, коли поповнився кеш деталей
@@ -69,6 +73,8 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
   const railX = useRef(0);                         // поточне зміщення стрічки, px
   const animating = useRef(false);                 // йде анімація переходу
   const dragging = useRef(false);                  // палець зараз веде картку
+  const [swipeHint, setSwipeHint] = useState<SwipeDir | null>(null);   // підказка «гортайте»
+  const [hintLeaving, setHintLeaving] = useState(false);
 
   // Ключ кешу враховує режим: адмін бачить більше полів, ніж публіка
   const cacheKey = (id: number) => `${admin ? 'a' : 'p'}:${id}`;
@@ -144,6 +150,55 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // Підказка «гортайте» (onboarding.ts): уперше на сенсорному екрані й лише коли є куди
+  // гортати. Пауза рахується від появи самого товару (не заглушки «Завантаження…»),
+  // щоб людина спершу побачила товар.
+  const loaded = product != null;
+  useEffect(() => {
+    if (!loaded || hintSeen('swipe') || !touchUi() || (prevId == null && nextId == null)) return;
+    const t = window.setTimeout(() => {
+      if (animating.current || dragging.current) return;
+      markHintSeen('swipe');
+      setSwipeHint(prevId != null && nextId != null ? 'both' : nextId != null ? 'next' : 'prev');
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [loaded, productId, prevId, nextId]);
+
+  // Поки підказка видна: картка ледь «підглядає» в бік сусіда в такт руці. Будь-який
+  // дотик ховає підказку (сам дотик спрацьовує як звичайно), інакше вона зникає сама.
+  useEffect(() => {
+    if (!swipeHint) return;
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const rail = railRef.current;
+    let peek: Animation | undefined;
+    if (rail?.animate && !still) {
+      const base = restPx(), d = 22;
+      const at = (dx: number, offset: number) => ({ transform: `translate3d(${base + dx}px,0,0)`, offset });
+      peek = rail.animate(swipeHint === 'both'
+        ? [at(0, 0), at(-d, 0.25), at(0, 0.5), at(d, 0.75), at(0, 1)]
+        : [at(0, 0), at(swipeHint === 'next' ? -d : d, 0.5), at(0, 0.8), at(0, 1)],
+      { duration: 1400, iterations: 2, delay: 150, easing: 'ease-in-out' });
+    }
+    let gone = 0;
+    const hide = () => {
+      peek?.cancel();
+      setHintLeaving(true);
+      window.clearTimeout(gone);
+      gone = window.setTimeout(() => { setSwipeHint(null); setHintLeaving(false); }, 180);
+    };
+    const auto = window.setTimeout(hide, 3500);
+    const opts = { capture: true, passive: true } as const;
+    window.addEventListener('pointerdown', hide, opts);
+    window.addEventListener('touchstart', hide, opts);
+    return () => {
+      peek?.cancel();
+      window.clearTimeout(auto);
+      window.clearTimeout(gone);
+      window.removeEventListener('pointerdown', hide, opts);
+      window.removeEventListener('touchstart', hide, opts);
+    };
+  }, [swipeHint]);
+
   // Перехід на сусідню картку однією неперервною анімацією: стрічка доїжджає рівно
   // на крок, і В ТОМУ Ж кадрі, коли рух завершився, ми міняємо productId і повертаємо
   // стрічку в базове положення — сусідня панель уже під пальцем, тож підміни не видно.
@@ -163,6 +218,7 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
       animating.current = false;
       window.clearTimeout(guard);
       rail?.removeEventListener('transitionend', onDone);
+      markHintSeen('swipe');   // уже гортає — підказка про жест більше не потрібна
       // flushSync: DOM з новою центральною панеллю має з'явитися ДО того, як стрічка
       // повернеться в базове положення — інакше буде видно кадр зі стрибком.
       flushSync(() => onNavigate?.(target));
@@ -335,9 +391,31 @@ export const ProductPage = ({ productId, siblingIds = [], onNavigate, onNeedMore
           );
         })}
       </div>
+      {swipeHint && <SwipeHint dir={swipeHint} leaving={hintLeaving} />}
     </div>
   );
 };
+
+// Підказка «гортайте»: рука показує жест, текст каже, куди саме. Лише вигляд — коли
+// показати й сховати, вирішує ProductPage.
+const SWIPE_HINT_TEXT: Record<SwipeDir, string> = {
+  both: 'Гортайте вбік до інших товарів',
+  next: 'Гортайте до наступного товару',
+  prev: 'Гортайте до попереднього товару',
+};
+
+const SwipeHint = ({ dir, leaving }: { dir: SwipeDir; leaving: boolean }) => (
+  <div className={`swipe-hint${leaving ? ' out' : ''}`} data-dir={dir} role="status">
+    {/* іконка «hand-finger» з Tabler Icons (MIT) */}
+    <svg className="swipe-hint-hand" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 13v-8.5a1.5 1.5 0 0 1 3 0v7.5" />
+      <path d="M11 11.5v-2a1.5 1.5 0 1 1 3 0v2.5" />
+      <path d="M14 10.5a1.5 1.5 0 0 1 3 0v1.5" />
+      <path d="M17 11.5a1.5 1.5 0 0 1 3 0v4.5a6 6 0 0 1 -6 6h-2h.208a6 6 0 0 1 -5.012 -2.7a69.74 69.74 0 0 1 -.196 -.3c-.312 -.479 -1.407 -2.388 -3.286 -5.728a1.5 1.5 0 0 1 .536 -2.022a1.867 1.867 0 0 1 2.28 .28l1.47 1.47" />
+    </svg>
+    <span>{SWIPE_HINT_TEXT[dir]}</span>
+  </div>
+);
 
 type SheetProps = {
   product: ProductDetail;

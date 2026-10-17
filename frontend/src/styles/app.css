@@ -1680,6 +1680,66 @@ button {
   .scroll-fab { transition: none; }
 }
 
+/* Підказка «гортайте» для новачків: по центру екрана, легка, зникає від будь-якого
+   дотику або сама за ~3.5 с. Рука показує жест; data-dir — куди можна гортати. */
+.swipe-hint {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 48;                 /* над карткою (40) і «назад» (46), під листами й переглядом фото */
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 240px;
+  padding: 14px 20px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(20, 20, 20, 0.72);
+  color: #ffffff;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-md);
+  font-size: var(--text-base);
+  line-height: 1.35;
+  text-align: center;
+  animation: swipe-hint-in var(--dur-med) var(--ease) both;
+  transition: opacity 180ms var(--ease);
+}
+.swipe-hint.out { opacity: 0; }
+.swipe-hint-hand { display: block; animation: 1.4s ease-in-out 150ms 2 both; }
+.swipe-hint[data-dir='both'] .swipe-hint-hand { animation-name: swipe-hand-both; }
+.swipe-hint[data-dir='next'] .swipe-hint-hand { animation-name: swipe-hand-next; }
+.swipe-hint[data-dir='prev'] .swipe-hint-hand { animation-name: swipe-hand-prev; }
+@keyframes swipe-hint-in {
+  from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); }
+  to   { opacity: 1; transform: translate(-50%, -50%); }
+}
+@keyframes swipe-hand-both {
+  0%, 50%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-16px); }
+  75% { transform: translateX(16px); }
+}
+/* Наступний: палець веде справа наліво, «відпускає» й повертається на старт */
+@keyframes swipe-hand-next {
+  0%   { transform: translateX(14px);  opacity: 1; }
+  50%  { transform: translateX(-14px); opacity: 1; }
+  65%  { transform: translateX(-14px); opacity: 0; }
+  80%  { transform: translateX(14px);  opacity: 0; }
+  100% { transform: translateX(14px);  opacity: 1; }
+}
+@keyframes swipe-hand-prev {
+  0%   { transform: translateX(-14px); opacity: 1; }
+  50%  { transform: translateX(14px);  opacity: 1; }
+  65%  { transform: translateX(14px);  opacity: 0; }
+  80%  { transform: translateX(-14px); opacity: 0; }
+  100% { transform: translateX(-14px); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .swipe-hint, .swipe-hint-hand { animation: none; }
+}
+
 /* «Медалі» технологій на фото — стовпчиком під номером товару, плитки однакового
    розміру (лого вписане всередину), щоб ширші лого не «випирали». Не ловлять дотик:
    тап по фото, як і раніше, відкриває перегляд. */
