@@ -20,6 +20,7 @@ export type CatalogItem = {
   fav_count?: number;   // скільки людей додали в «Обране» (♥️, публічно)
   on_sale?: boolean;    // чи діє знижка (акційна ціна для вітрини)
   sale_price?: number | null;   // акційна ціна
+  price_from?: boolean;   // розміри коштують по-різному — «від …»
 };
 
 export type CatalogResponse = {
@@ -50,6 +51,7 @@ export type ProductImage = { url: string; kind: 'official' | 'real' | 'defect' }
 export type SizeVariant = {
   id: number;
   productnumber?: string;   // СВІЙ номер розміру: злита картка складається з кількох номерів
+  price?: number;           // ціна саме цього розміру (з акцією номера)
   sizeeu: string | null;
   sizeua: string | null;
   size_letter: string | null;
@@ -98,6 +100,7 @@ export type ProductDetail = {
   materials: Record<string, string[]>;
   images: ProductImage[];
   size_variants: SizeVariant[];
+  price_from?: boolean;   // розміри коштують по-різному — «від …» і ціна на кожному розмірі
   published: boolean;
   featured: boolean;
   description_public?: boolean;   // чи опис публічний (адмін керує)

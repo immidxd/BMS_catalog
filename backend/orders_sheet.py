@@ -413,6 +413,9 @@ def place_order(tg_user_id: int, productnumber: str, size: Optional[str],
         ensure_table(db)
         priced = []
         for pn, sz in (items or [(productnumber, size)]):
+            # Ціна САМЕ цього розміру: розміри одного номера можуть коштувати по-різному.
+            # Розмір не впізнали — перший рядок номера, як і раніше.
+            label = str(sz or "").strip()
             found = db.execute(text("""
                 SELECT CASE WHEN COALESCE(cl.is_on_sale, FALSE)
                              AND cl.sale_price IS NOT NULL
@@ -421,8 +424,11 @@ def place_order(tg_user_id: int, productnumber: str, size: Optional[str],
                 FROM products p
                 LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
                 WHERE p.productnumber = :pn
-                ORDER BY p.id LIMIT 1
-            """), {"pn": pn}).first()
+                ORDER BY (p.sizeeu = :eu OR p.size_letter = :label OR p.measurementscm = :cm) IS TRUE DESC,
+                         p.id
+                LIMIT 1
+            """), {"pn": pn, "label": label, "eu": re.sub(r"\s*EU$", "", label, flags=re.I),
+                   "cm": re.sub(r"\s*см$", "", label)}).first()
             if not found:
                 logger.info("[orders] %s немає в базі — позицію не записано", pn)
                 continue

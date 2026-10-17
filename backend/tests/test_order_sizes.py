@@ -88,6 +88,9 @@ def test_business_message_items():
     cm = "Дитячі — #Д12\nРозміри: 25,5-26 см, 27 см"
     assert tgb._order_items(cm, "#Д12") == [("#Д12", "25,5-26 см"), ("#Д12", "27 см")]
     assert tgb._order_items("Сумка — #С1\nЦіна: 900 грн", "#С1") == [("#С1", None)]
+    # Розміри з різною ціною: ціна (і номер) у дужках не потрапляють у розмір
+    priced = "UGG Jella — #Ф4046\nРозміри: 40 EU (1 290 грн), 41 EU (#Ф4046-2, 1 100 грн)\nРазом: 2 390 грн"
+    assert tgb._order_items(priced, "#Ф4046") == [("#Ф4046", "40 EU"), ("#Ф4046-2", "41 EU")]
 
 
 def test_click_items_are_sanitized():

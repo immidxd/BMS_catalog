@@ -8,7 +8,9 @@
 і перезаливає потрібні таблиці в хмару — у локальну БД НІЧОГО не пише, BMS не чіпає.
 
 Приватність: з orders/order_items беремо ЛИШЕ колонки для sold_count — жодних даних
-клієнтів (імен, адрес, цін оплат) у хмару не потрапляє.
+клієнтів (імен, адрес, цін оплат) у хмару не потрапляє. client_id — лише число-ключ
+(без таблиці clients): за ним sold_count рахується ТАК САМО, як у BMS (повернення
+гасить продаж лише того самого клієнта).
 
 Запуск:  CLOUD_DATABASE_URL=postgres://... python cloud/sync_to_cloud.py
 Локальні креди — зі звичайних DB_* (.env у корені BMS_catalog).
@@ -140,7 +142,9 @@ TABLES = {
     # у ХМАРНУ БД через Railway).
     "brand_aliases": None,
     "products": None,
-    "orders": ["id", "order_status_id", "payment_status_id"],
+    # client_id — для канонічного sold_count BMS (повернення гасить лише продаж того
+    # самого клієнта). Без нього перепродана після повернення пара «воскресала» у вітрині.
+    "orders": ["id", "order_status_id", "payment_status_id", "client_id"],
     "order_items": ["order_id", "product_id"],
 }
 

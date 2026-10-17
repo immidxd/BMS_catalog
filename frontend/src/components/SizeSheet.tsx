@@ -12,6 +12,7 @@ import { haptic, pushBackLayer } from '../telegram';
 type Props = {
   variants: SizeVariant[];
   label: (v: SizeVariant) => string;
+  price: (v: SizeVariant) => string | null;   // ціна розміру — лише коли розміри коштують по-різному
   onOrder: (chosen: SizeVariant[]) => void;
   onClose: () => void;
 };
@@ -23,7 +24,7 @@ const orderLabel = (n: number): string => {
   return `Замовити ${n} ${few ? 'розміри' : 'розмірів'}`;
 };
 
-export const SizeSheet = ({ variants, label, onOrder, onClose }: Props) => {
+export const SizeSheet = ({ variants, label, price, onOrder, onClose }: Props) => {
   const [picked, setPicked] = useState<number[]>([]);
 
   // Esc і «Назад» Telegram закривають лист, а не саму картку
@@ -62,6 +63,7 @@ export const SizeSheet = ({ variants, label, onOrder, onClose }: Props) => {
                 aria-pressed={picked.includes(v.id)} onClick={() => toggle(v.id)}>
                 {label(v)}
                 {v.measurementscm && v.sizeeu && <span className="option-count">{v.measurementscm} см</span>}
+                {price(v) && <span className="option-count">{price(v)}</span>}
               </button>
             ))}
           </div>

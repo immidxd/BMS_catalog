@@ -482,17 +482,28 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   // ⚠️ Формат читає вебхук Business (tg_business.py: «Розмір:»/«Розміри:», «#номер»).
   const pnOf = (v: SizeVariant): string => v.productnumber || product.productnumber;
   const orderMessage = (chosen: SizeVariant[]): string => {
+    const varied = !!product.price_from;   // розміри коштують по-різному — ціна кожного свого
     const price = onSale && priceOriginal
       ? `${formatPrice(shownPrice)} (замість ${formatPrice(priceOriginal)})`   // formatPrice уже дає «грн»
       : formatPrice(shownPrice);
+    const priceOf = (v: SizeVariant) => v.price ?? shownPrice;
     const numbers = new Set(chosen.map(pnOf));
-    const sizes = chosen.map((v) => variantLabel(v) + (numbers.size > 1 ? ` (${pnOf(v)})` : ''));
+    const sizes = chosen.map((v) => {
+      const extra = [numbers.size > 1 ? pnOf(v) : '', varied && chosen.length > 1 ? formatPrice(priceOf(v)) : '']
+        .filter(Boolean).join(', ');
+      return variantLabel(v) + (extra ? ` (${extra})` : '');
+    });
+    const priceLine = !varied
+      ? `Ціна: ${chosen.length > 1 ? `${chosen.length} × ` : ''}${price}`
+      : chosen.length > 1
+        ? `Разом: ${formatPrice(chosen.reduce((sum, v) => sum + priceOf(v), 0))}`
+        : `Ціна: ${formatPrice(chosen[0] ? priceOf(chosen[0]) : shownPrice)}`;
     return [
       'Доброго дня! Цікавить товар:',
       '',
       numbers.size > 1 ? titleText : `${titleText} — ${chosen[0] ? pnOf(chosen[0]) : product.productnumber}`,
       sizes.length ? `${sizes.length > 1 ? 'Розміри' : 'Розмір'}: ${sizes.join(', ')}` : null,
-      `Ціна: ${chosen.length > 1 ? `${chosen.length} × ` : ''}${price}`,
+      priceLine,
     ].filter((l) => l !== null).join('\n');
   };
 
@@ -712,6 +723,12 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   const onSale = catalogSale || legacySale;
   const shownPrice = catalogSale ? product.sale_price! : product.price;
   const priceOriginal = catalogSale ? product.price : (legacySale ? product.oldprice! : null);
+  // Розміри з різною ціною (як у сітці): у шапці «від» найменшої, на кожному розмірі — своя.
+  // Закреслену ціну й −% тоді не показуємо: для різних розмірів вони різні.
+  const priceFrom = product.price_from
+    ? Math.min(...product.size_variants.map((v) => v.price ?? shownPrice)) : null;
+  const sizePrice = (v: SizeVariant): string | null =>
+    priceFrom != null && v.price != null ? formatPrice(v.price) : null;
 
   return (
     <div className="product-sheet">
@@ -777,9 +794,15 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
           )}
           <h1 className="product-title">{titleText}</h1>
           <div className="price-row">
-            <span className={`price product-price${onSale ? ' sale' : ''}`}>{formatPrice(shownPrice)}</span>
-            {priceOriginal && <span className="price-old">{formatPrice(priceOriginal)}</span>}
-            {onSale && priceOriginal && <span className="sale-badge inline">−{discountPct(priceOriginal, shownPrice)}%</span>}
+            {priceFrom != null ? (
+              <span className={`price product-price${onSale ? ' sale' : ''}`}>від {formatPrice(priceFrom)}</span>
+            ) : (
+              <>
+                <span className={`price product-price${onSale ? ' sale' : ''}`}>{formatPrice(shownPrice)}</span>
+                {priceOriginal && <span className="price-old">{formatPrice(priceOriginal)}</span>}
+                {onSale && priceOriginal && <span className="sale-badge inline">−{discountPct(priceOriginal, shownPrice)}%</span>}
+              </>
+            )}
           </div>
           <div className="meta-line">
             {onToggleFav && (
@@ -829,6 +852,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
                   {variant.measurementscm && variant.sizeeu && (
                     <span className="option-count">{variant.measurementscm} см</span>
                   )}
+                  {sizePrice(variant) && <span className="option-count">{sizePrice(variant)}</span>}
                 </span>
               ))}
             </div>
@@ -921,7 +945,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
       </div>
 
       {sizeSheet && (
-        <SizeSheet variants={product.size_variants} label={variantLabel}
+        <SizeSheet variants={product.size_variants} label={variantLabel} price={sizePrice}
           onOrder={sendOrder} onClose={closeSizeSheet} />
       )}
 

@@ -141,20 +141,26 @@ def _ensure_featured_order_column(db: Session) -> None:
     db.commit()
 
 
-# «Продано» = Подарунок(7) АБО (Підтверджено(1) І Оплачено(1)), мінус Повернення(9).
+# «Продано» = Подарунок(7) АБО (Підтверджено(1) І Оплачено(1)). Повернення(9) гасить
+# лише оплачений продаж ТОГО САМОГО клієнта — рівно як у BMS (services/product_service.py,
+# «Тримати в синхроні!»). Раніше віднімались УСІ повернення, і пара, яку повернули,
+# а потім продали іншому клієнту, «воскресала» у вітрині як наявна (#Ф3915, 17.10.2026).
 _SOLD_JOIN = """
     LEFT JOIN (
-        SELECT oi.product_id,
-               GREATEST(
-                 COUNT(*) FILTER (WHERE o.order_status_id = 7
-                                    OR (o.order_status_id = 1 AND o.payment_status_id = 1))
-                 - COUNT(*) FILTER (WHERE o.order_status_id = 9),
-               0) AS sold_count
-        FROM order_items oi
-        JOIN orders o ON o.id = oi.order_id
-        WHERE oi.product_id IS NOT NULL
-          AND o.order_status_id IN (1, 7, 9)
-        GROUP BY oi.product_id
+        SELECT pc.product_id,
+               GREATEST(SUM(pc.paid_sold) - SUM(LEAST(pc.paid_sold, pc.returns)), 0) AS sold_count
+        FROM (
+            SELECT oi.product_id, o.client_id,
+                   COUNT(*) FILTER (WHERE o.order_status_id = 7
+                                      OR (o.order_status_id = 1 AND o.payment_status_id = 1)) AS paid_sold,
+                   COUNT(*) FILTER (WHERE o.order_status_id = 9) AS returns
+            FROM order_items oi
+            JOIN orders o ON o.id = oi.order_id
+            WHERE oi.product_id IS NOT NULL
+              AND o.order_status_id IN (1, 7, 9)
+            GROUP BY oi.product_id, o.client_id
+        ) pc
+        GROUP BY pc.product_id
     ) sold ON sold.product_id = p.id
 """
 
@@ -175,6 +181,11 @@ _FULL_JOINS = f"""
         LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
         {_SOLD_JOIN}
 """
+
+# Ціна рядка-розміру з акцією номера (catalog_listings) — та сама умова, що й у писаря
+# «Замовлень»: акційна ціна лише тоді, коли вона справді нижча
+_ROW_PRICE = """CASE WHEN COALESCE(cl.is_on_sale, FALSE) AND cl.sale_price > 0
+                       AND cl.sale_price < p.price THEN cl.sale_price ELSE p.price END"""
 
 _AVAILABLE_WHERE = """
     GREATEST(COALESCE(p.quantity, 0) - COALESCE(sold.sold_count, 0), 0) > 0
@@ -538,6 +549,8 @@ async def get_catalog(
             SELECT MIN(p.id) AS id, p.productnumber,
                    MIN(p.official_photos_from) AS official_photos_from,
                    MIN(p.model) AS model, MIN(p.price) AS price, MAX(p.oldprice) AS oldprice,
+                   -- Ціни розмірів (з акцією номера): різні — у картці «від …»
+                   MIN({_ROW_PRICE}) AS eff_min, MAX({_ROW_PRICE}) AS eff_max,
                    ARRAY_AGG(DISTINCT p.sizeeu) FILTER (WHERE p.sizeeu IS NOT NULL AND p.sizeeu <> '') AS sizes,
                    ARRAY_AGG(DISTINCT p.size_letter) FILTER (WHERE p.size_letter IS NOT NULL AND p.size_letter <> '') AS size_letters,
                    MIN(p.measurementscm) AS measurementscm,
@@ -580,7 +593,8 @@ async def get_catalog(
                    MIN(measurementscm) AS measurementscm,
                    BOOL_OR(featured) AS featured, BOOL_OR(published) AS published,
                    BOOL_OR(on_sale) AS on_sale, MIN(sale_price) AS sale_price,
-                   MIN(featured_order) AS featured_order
+                   MIN(featured_order) AS featured_order,
+                   MAX(eff_max) > MIN(eff_min) AS price_from
             FROM per_number
             GROUP BY {group_key}
             ORDER BY {order}
@@ -648,6 +662,7 @@ async def get_catalog(
             # Фронт за цими полями сам покаже −X% і закреслить початкову ціну.
             "on_sale": catalog_sale or legacy_sale,
             "sale_price": sale_price,
+            "price_from": bool(r["price_from"]),   # розміри коштують по-різному — «від …»
         })
 
     # Перегляди на картку (для адмін-бейджа) — один батч-запит по представниках.
@@ -1026,38 +1041,67 @@ async def get_catalog_product(
     images = list_images(row["productnumber"], row["official_photos_from"] or "",
                          width=GALLERY_IMAGE_WIDTH, official_only=only_published)
 
-    # Розміри: для номера (ростовка) АБО для всіх номерів тієї ж пропозиції
-    # (group_offers) — щоб злита картка показувала повну ростовку всіх завозів.
-    # Кожен розмір несе СВІЙ номер: «Замовити» 40-й розмір злитої картки має назвати
-    # менеджеру й записати в «Замовлення» номер саме цієї пари (напр. #Ф1067-2).
+    # Розміри картки — РІВНО ті, що в сітці. Сітка спершу збирає рядки по НОМЕРУ (уся
+    # ростовка), а тоді зливає номери з однаковим підписом пропозиції (MIN по рядках
+    # номера; фото-гейт). Тож і тут: свій номер — завжди повністю, інші — якщо їхній
+    # підпис, порахований так само, збігся з нашим. Раніше підпис звірявся ПО РЯДКАХ із
+    # рядком-представником, і різнобій у даних ростовки (ECCO Street 1 #Ф4350: 36 —
+    # «Всесезон», 37–40 — «Демі»; різні ціни розмірів) ховав у картці розміри із сітки.
+    # Кожен розмір несе СВІЙ номер і СВОЮ ціну: «Замовити» 40-й розмір злитої картки має
+    # назвати менеджеру й записати в «Замовлення» номер і ціну саме цієї пари.
     size_rows = db.execute(
         text(f"""
-            SELECT p.id, p.productnumber, p.sizeeu, p.sizeua, p.size_letter, p.measurementscm,
-                   GREATEST(COALESCE(p.quantity, 0) - COALESCE(sold.sold_count, 0), 0) AS available
-            FROM products p
-            LEFT JOIN statuses s ON p.statusid = s.id
-            LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
-            {_SOLD_JOIN}
-            WHERE {_AVAILABLE_WHERE}{pub_clause} AND (
-                (NOT :group_offers AND p.productnumber = :pnum)
-                OR (:group_offers
-                    AND p.brandid IS NOT DISTINCT FROM :brandid
-                    AND p.typeid IS NOT DISTINCT FROM :typeid
-                    AND p.colorid IS NOT DISTINCT FROM :colorid
-                    AND lower(btrim(coalesce(p.model, ''))) = lower(btrim(coalesce(:model_raw, '')))
-                    AND lower(btrim(coalesce(p.season, ''))) = lower(btrim(coalesce(:season_raw, '')))
-                    AND p.price IS NOT DISTINCT FROM :price
-                    AND COALESCE(p.current_conditionid, p.conditionid) IS NOT DISTINCT FROM :cond)
+            WITH avail AS (
+                SELECT p.id, p.productnumber, p.sizeeu, p.sizeua, p.size_letter, p.measurementscm,
+                       GREATEST(COALESCE(p.quantity, 0) - COALESCE(sold.sold_count, 0), 0) AS available,
+                       p.price, COALESCE(cl.is_on_sale, FALSE) AS on_sale, cl.sale_price,
+                       p.brandid, p.typeid, p.colorid, p.model, p.season,
+                       COALESCE(p.current_conditionid, p.conditionid) AS cond,
+                       (BTRIM(LTRIM(p.productnumber, '#')) = ANY(CAST(:photo_pns AS text[]))
+                        OR BTRIM(COALESCE(p.official_photos_from, '')) = ANY(CAST(:photo_pns AS text[])))
+                           AS photo_ok
+                FROM products p
+                LEFT JOIN statuses s ON p.statusid = s.id
+                LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
+                {_SOLD_JOIN}
+                WHERE {_AVAILABLE_WHERE}{pub_clause}
+            ), sig AS (
+                SELECT productnumber, BOOL_OR(photo_ok) AS photo_ok,
+                       MIN(brandid) AS brandid, MIN(typeid) AS typeid, MIN(colorid) AS colorid,
+                       lower(btrim(coalesce(MIN(model), ''))) AS model_key,
+                       lower(btrim(coalesce(MIN(season), ''))) AS season_key,
+                       MIN(price) AS price, MIN(cond) AS cond_key
+                FROM avail GROUP BY productnumber
             )
-            ORDER BY p.sizeeu NULLS LAST, p.id
+            SELECT a.id, a.productnumber, a.sizeeu, a.sizeua, a.size_letter, a.measurementscm,
+                   a.available, a.price, a.on_sale, a.sale_price
+            FROM avail a
+            WHERE a.productnumber = :pnum
+               OR (:group_offers AND a.productnumber IN (
+                     SELECT o.productnumber FROM sig o JOIN sig me ON me.productnumber = :pnum
+                     WHERE o.photo_ok
+                       AND o.brandid IS NOT DISTINCT FROM me.brandid
+                       AND o.typeid IS NOT DISTINCT FROM me.typeid
+                       AND o.colorid IS NOT DISTINCT FROM me.colorid
+                       AND o.model_key = me.model_key AND o.season_key = me.season_key
+                       AND o.price IS NOT DISTINCT FROM me.price
+                       AND o.cond_key IS NOT DISTINCT FROM me.cond_key))
+            ORDER BY a.sizeeu NULLS LAST, a.id
         """),
-        {
-            "group_offers": group_offers, "pnum": row["productnumber"],
-            "brandid": row["brandid"], "typeid": row["typeid"], "colorid": row["colorid"],
-            "model_raw": row["model"], "season_raw": row["season"],
-            "price": row["price"], "cond": row["sig_cond"],
-        },
+        {"group_offers": group_offers, "pnum": row["productnumber"],
+         "photo_pns": list(official_photo_productnumbers()) if group_offers else []},
     ).mappings().all()
+
+    # Ціна, яку бачить покупець для КОНКРЕТНОГО розміру: акційна ціна номера (якщо діє
+    # і, для публіки, відчутна) або ціна рядка. Розміри одного номера можуть коштувати
+    # по-різному — тоді картка й сітка пишуть «від …», а пігулки — ціну кожного розміру.
+    def _shown_price(r) -> float:
+        price = float(r["price"])
+        sale = float(r["sale_price"]) if r["sale_price"] is not None else None
+        ok = bool(r["on_sale"]) and sale is not None and 0 < sale < price
+        if ok and only_published and not _worth_showing(price, sale):
+            ok = False
+        return sale if ok else price
 
     # Дедуплікація за САМИМ розміром (як він у чіпі), БЕЗ устілки в см — інакше
     # «43-44 EU» з трохи різним обміром (27-27.5 vs 27-28 см) дублювався б. Ключ:
@@ -1075,7 +1119,9 @@ async def get_catalog_product(
         if key in seen:
             continue
         seen.add(key)
-        size_variants.append(dict(r))
+        size_variants.append({**{k: r[k] for k in ("id", "productnumber", "sizeeu", "sizeua",
+                                                   "size_letter", "measurementscm", "available")},
+                              "price": _shown_price(r)})
 
     skip = {"official_photos_from", "brandid", "typeid", "colorid", "sig_cond"}
     out = {k: row[k] for k in row.keys() if k not in skip}
@@ -1120,6 +1166,8 @@ async def get_catalog_product(
         "materials": materials_by_position,
         "images": [{"url": img.url, "kind": img.kind} for img in images],
         "size_variants": size_variants,
+        # Розміри з різною ціною — у картці «від …» і ціна на кожному розмірі
+        "price_from": len({v["price"] for v in size_variants}) > 1,
         "views": int(views),
         "fav_count": int(fav_count),
     }

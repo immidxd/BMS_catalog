@@ -110,7 +110,7 @@ export const ProductCard = ({ item, onOpen, priority = false, admin = false, onT
         <div className="card-title">{item.model ?? item.type ?? 'Без назви'}</div>
         <div className="card-meta">{[size, formatSeason(item.season)].filter(Boolean).join(' · ') || ' '}</div>
         <div>
-          <span className={`price${onSale ? ' sale' : ''}`}>{formatPrice(shownPrice)}</span>
+          <span className={`price${onSale ? ' sale' : ''}`}>{item.price_from ? 'від ' : ''}{formatPrice(shownPrice)}</span>
           {original && <span className="price-old">{formatPrice(original)}</span>}
         </div>
       </div>
