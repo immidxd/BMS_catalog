@@ -52,7 +52,22 @@ TEMPLATE_MARK = "цікавить товар"
 # Номер товару в листі: «#Ф2886», «#В234», «#Ф1067-2». У БД номер зберігається
 # РАЗОМ із решіткою, тож беремо збіг як є, нічого не зрізаючи.
 _NUMBER = re.compile(r"#[0-9A-Za-zА-Яа-яЇїІіЄєҐґ]{1,12}(?:-\d{1,3})?")
-_SIZE = re.compile(r"Розмір:\s*(.{1,32})")
+# «Розмір: 39 EU» або, з діалогу «Замовити», «Розміри: 39 EU, 40 EU». Розміри різних
+# номерів злитої картки — з номером у дужках: «38 EU (#Ф1067), 39 EU (#Ф1067-2)»
+_SIZES = re.compile(r"Розміри?:\s*([^\n]{1,240})")
+
+
+def _order_items(body: str, number: str) -> list:
+    """Позиції листа: (номер, розмір) на кожен розмір; без розмірів — сам номер."""
+    m = _SIZES.search(body)
+    items = []
+    # Роздільник — кома З ПРОБІЛОМ: «25,5-26 см» (кома всередині розміру) не ріжемо
+    for part in (re.split(r",\s+", m.group(1)) if m else []):
+        own = _NUMBER.search(part)
+        size = re.sub(r"\(\s*#[^)]*\)", "", part).strip()[:32]
+        if size or own:
+            items.append((own.group(0) if own else number, size or None))
+    return items or [(number, None)]
 
 
 def enabled() -> bool:
@@ -131,8 +146,7 @@ async def telegram_webhook(
     if not fresh:
         return {"ok": True}                      # це оновлення ми вже обробили
 
-    size = _SIZE.search(body)
+    items = _order_items(body, number.group(0))
     background.add_task(orders_sheet.place_order, int(sender["id"]),
-                        number.group(0), size.group(1).strip() if size else None,
-                        _buyer(sender))
+                        number.group(0), items[0][1], _buyer(sender), items)
     return {"ok": True}

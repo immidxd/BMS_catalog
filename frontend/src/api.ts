@@ -49,6 +49,7 @@ export type ProductImage = { url: string; kind: 'official' | 'real' | 'defect' }
 
 export type SizeVariant = {
   id: number;
+  productnumber?: string;   // СВІЙ номер розміру: злита картка складається з кількох номерів
   sizeeu: string | null;
   sizeua: string | null;
   size_letter: string | null;

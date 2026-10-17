@@ -182,6 +182,19 @@ def _clean_metadata(event_type: str, metadata: Any) -> Dict[str, str]:
     return {}
 
 
+def _order_items(metadata: Any, pnum: str, size: Optional[str]) -> list:
+    """Позиції «Замовити»: розміри з діалогу, кожен зі СВОЇМ номером (злита картка
+    складається з кількох номерів). Немає — один товар картки, як і раніше. Номер
+    перевіряє писар за БД; тут лише відсікаємо сміття (і «;» — роздільник аркуша)."""
+    raw = metadata.get("items") if isinstance(metadata, dict) else None
+    items = []
+    for it in (raw if isinstance(raw, list) else [])[:12]:
+        pn = str(it.get("pn") or "").strip() if isinstance(it, dict) else ""
+        if pn and len(pn) <= 80 and ";" not in pn:
+            items.append((pn, str(it.get("size") or "").replace(";", " ").strip()[:32] or None))
+    return items or [(pnum, size)]
+
+
 @router.post("/api/analytics/events")
 async def record_event(
     background: BackgroundTasks,
@@ -249,7 +262,8 @@ async def record_event(
         buyer = telegram_profile_from_init_data(x_telegram_init_data or "")
         if buyer and buyer.get("id"):
             background.add_task(orders_sheet.place_order, int(buyer["id"]), pnum,
-                                meta.get("size"), buyer)
+                                meta.get("size"), buyer,
+                                _order_items(payload.get("metadata"), pnum, meta.get("size")))
 
     # Keep the old admin badge compatible, but increment it only for a genuine,
     # deduplicated active-card view. Historical inflated values are preserved as legacy.

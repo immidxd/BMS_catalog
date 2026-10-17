@@ -290,11 +290,12 @@ def remember(db, session_id: str, title: str, row_index: int) -> None:
     db.commit()
 
 
-def record_intent(productnumber: str, price: Optional[float], size: Optional[str],
+def record_intent(items: List[Tuple[str, Optional[float], Optional[str]]],
                   previous: Optional[Tuple[str, int]] = None,
                   buyer: Optional[Dict[str, str]] = None) -> Optional[Tuple[str, int]]:
-    """Записати намір. Повертає (назва вкладки, рядок) — щоб наступний товар того
-    самого відвідувача дописався СЮДИ Ж, а не створив новий рядок.
+    """Записати намір: одна чи кілька позицій (номер, ціна, розмір) — кілька розмірів
+    із діалогу «Замовити» = кілька позицій. Повертає (назва вкладки, рядок) — щоб
+    наступний товар того самого відвідувача дописався СЮДИ Ж, а не створив новий рядок.
 
     previous — те, що повернув попередній виклик у цьому ж заході відвідувача.
     Якщо власник встиг змінити той рядок (інший статус/коментар/дата) — не чіпаємо
@@ -302,13 +303,17 @@ def record_intent(productnumber: str, price: Optional[float], size: Optional[str
     """
     if not enabled():
         return None
-    number = (productnumber or "").strip().lstrip("#")
-    if not number:
-        return None
     # Формат уточнення — рівно як у власника: «Ф4350 (40);», без «EU».
     # З каталогу розмір приходить підписом пігулки («38 EU», «41.3 EU», «M»).
-    size_label = re.sub(r"\s*EU\s*$", "", str(size or "").strip(), flags=re.I)
-    detail = f"{number} ({size_label})" if size_label else ""
+    # Дві пари одного номера — дві позиції: номер і ціна повторюються, так їх рахує «Сума».
+    wanted = []
+    for productnumber, price, size in items:
+        number = (productnumber or "").strip().lstrip("#")
+        size_label = re.sub(r"\s*EU\s*$", "", str(size or "").strip(), flags=re.I)
+        if number:
+            wanted.append((number, price, f"{number} ({size_label})" if size_label else ""))
+    if not wanted:
+        return None
 
     with _WRITE_LOCK:
         sh = _client().open_by_key(os.environ["ORDERS_SPREADSHEET_ID"])
@@ -319,17 +324,23 @@ def record_intent(productnumber: str, price: Optional[float], size: Optional[str
         if previous and previous[0] == ws.title and _is_ours(layout, previous[1]):
             row = previous[1]
             numbers = _split(layout.cell(row, COL_NUMBERS))
-            if number in numbers:
-                # Повторний клік по тому самому товару — не друга позиція в рядку
-                logger.info("[orders] %s уже в рядку %d — пропускаю", number, row)
-                return previous
-            numbers = numbers + [number]
-            prices = _split(layout.cell(row, COL_PRICE)) + ([_fmt_price(price)] if price else [])
-            details = _split(layout.cell(row, COL_DETAILS)) + ([detail] if detail else [])
+            prices = _split(layout.cell(row, COL_PRICE))
+            details = _split(layout.cell(row, COL_DETAILS))
         else:
-            row, numbers = None, [number]
-            prices = [_fmt_price(price)] if price else []
-            details = [detail] if detail else []
+            row, numbers, prices, details = None, [], [], []
+        added = []
+        for number, price, detail in wanted:
+            # Повторний клік по тому самому товару (і розміру) — не друга позиція в рядку
+            if (detail in details) if detail else (number in numbers):
+                continue
+            numbers.append(number)
+            prices += [_fmt_price(price)] if price else []
+            details += [detail] if detail else []
+            added.append(number)
+        if not added:
+            logger.info("[orders] %s уже в рядку %s — пропускаю", wanted[0][0], row)
+            return previous
+        number = ", ".join(added)
 
         payload = _values(numbers, prices, details, buyer)
 
@@ -373,7 +384,8 @@ from own_accounts import is_own as is_own_account  # noqa: E402
 
 
 def place_order(tg_user_id: int, productnumber: str, size: Optional[str],
-                         buyer: Optional[Dict[str, str]] = None) -> None:
+                buyer: Optional[Dict[str, str]] = None,
+                items: Optional[List[Tuple[str, Optional[str]]]] = None) -> None:
     """Фонове створення замовлення. Кличеться ЛИШЕ тоді, коли покупця підтвердив
     Telegram: `tg_user_id` — його перевірена підписом особа, і саме вона стає
     ключем рядка, тож повторні кліки того самого покупця не плодять рядків.
@@ -383,6 +395,8 @@ def place_order(tg_user_id: int, productnumber: str, size: Optional[str],
     Невідомого номера в документі бути не може — такий виклик просто ігноруємо.
     Сюди сходяться ОБИДВА шляхи (клік у каталозі й лист у Business), тож перевірка
     власних акаунтів тут закриває обидва.
+    items — позиції (номер, розмір), коли розмірів кілька: кожен розмір несе СВІЙ
+    номер (злита картка складається з кількох номерів). Без них — один товар картки.
     """
     if not enabled():
         return
@@ -397,23 +411,26 @@ def place_order(tg_user_id: int, productnumber: str, size: Optional[str],
     db = SessionLocal()
     try:
         ensure_table(db)
-        found = db.execute(text("""
-            SELECT CASE WHEN COALESCE(cl.is_on_sale, FALSE)
-                         AND cl.sale_price IS NOT NULL
-                         AND cl.sale_price > 0 AND cl.sale_price < p.price
-                        THEN cl.sale_price ELSE p.price END
-            FROM products p
-            LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
-            WHERE p.productnumber = :pn
-            ORDER BY p.id LIMIT 1
-        """), {"pn": productnumber}).first()
-        if not found:
-            logger.info("[orders] %s немає в базі — замовлення не створено", productnumber)
+        priced = []
+        for pn, sz in (items or [(productnumber, size)]):
+            found = db.execute(text("""
+                SELECT CASE WHEN COALESCE(cl.is_on_sale, FALSE)
+                             AND cl.sale_price IS NOT NULL
+                             AND cl.sale_price > 0 AND cl.sale_price < p.price
+                            THEN cl.sale_price ELSE p.price END
+                FROM products p
+                LEFT JOIN catalog_listings cl ON cl.productnumber = p.productnumber
+                WHERE p.productnumber = :pn
+                ORDER BY p.id LIMIT 1
+            """), {"pn": pn}).first()
+            if not found:
+                logger.info("[orders] %s немає в базі — позицію не записано", pn)
+                continue
+            priced.append((pn, float(found[0]) if found[0] else None, sz))
+        if not priced:
             return
-        price = found[0]
         key = _row_key(tg_user_id)
-        placed = record_intent(productnumber, float(price) if price else None,
-                               size, previous=recall(db, key), buyer=buyer)
+        placed = record_intent(priced, previous=recall(db, key), buyer=buyer)
         if placed:
             remember(db, key, placed[0], placed[1])
     except Exception as exc:                       # noqa: BLE001

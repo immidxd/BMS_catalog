@@ -1,12 +1,13 @@
 // Повна сторінка товару: галерея (свайп), характеристики, зв'язок з продавцем
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { AdminAuth, Hints, ProductDetail, TechLogo, cap, capSlash, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
+import { AdminAuth, Hints, ProductDetail, SizeVariant, TechLogo, cap, capSlash, discountPct, fetchProduct, formatPrice, formatSeason, setCatalogDescription, setCatalogDiscount } from '../api';
 import { Tech, parseTechnologies } from '../techLogos';
 import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, shareViaTelegram, showBackButton } from '../telegram';
 import { productUrl } from '../deepLink';
 import { hintSeen, markHintSeen, touchUi } from '../onboarding';
 import { Lightbox } from './Lightbox';
+import { SizeSheet } from './SizeSheet';
 import { trackCatalogEvent } from '../analytics';
 
 type Props = {
@@ -448,20 +449,16 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   const [shared, setShared] = useState(false);   // «Скопійовано ✓» після поділитися
   const [zoomAt, setZoomAt] = useState<number | null>(null);   // відкрите фото в переглядачі
   const trackRef = useRef<HTMLDivElement>(null);
-  // Обраний розмір їде в текст замовлення. Коли розмір один — беремо його одразу
-  // (питати нема про що); коли їх кілька — покупець мусить обрати, інакше менеджер
-  // отримає запит без найголовнішого і почне діалог з уточнення.
-  const [sizeId, setSizeId] = useState<number | null>(null);
-  const sizesRef = useRef<HTMLDivElement>(null);
-  const [sizesFlash, setSizesFlash] = useState(false);   // підсвітка «оберіть розмір»
+  // Обрані розміри їдуть у текст замовлення. Коли розмір один — беремо його одразу
+  // (питати нема про що); коли їх кілька — «Замовити» відкриває діалог вибору (можна
+  // кілька), інакше менеджер отримав би запит без найголовнішого.
+  const [sizeSheet, setSizeSheet] = useState(false);
+  const closeSizeSheet = useCallback(() => setSizeSheet(false), []);
 
   useEffect(() => { setSlide(0); setHint(null); trackRef.current?.scrollTo({ left: 0 }); }, [product.id]);
 
-  // Скидаємо вибір при переході на інший товар; єдиний розмір — обираємо самі
-  useEffect(() => {
-    setSizesFlash(false);
-    setSizeId(product.size_variants.length === 1 ? product.size_variants[0].id : null);
-  }, [product.id, product.size_variants]);
+  // Інший товар — діалог вибору розміру попереднього закриваємо
+  useEffect(() => { setSizeSheet(false); }, [product.id]);
 
   const handleScroll = () => {
     const track = trackRef.current;
@@ -479,30 +476,23 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
     trackRef.current?.scrollTo({ left: next * (trackRef.current?.clientWidth ?? 0), behavior: 'smooth' });
   };
 
-  // Розмірів кілька, а вибору ще нема — вести в чат зарано: підсвічуємо блок розмірів
-  // і прокручуємо до нього. Це м'якше за заблоковану кнопку, яка нічого не пояснює.
-  const askForSize = (): boolean => {
-    if (product.size_variants.length <= 1 || sizeId != null) return false;
-    haptic('light');
-    sizesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setSizesFlash(true);
-    setTimeout(() => setSizesFlash(false), 1600);
-    return true;
-  };
-
-  // Повідомлення менеджеру: назва, номер, розмір і ціна — щоб діалог починався з
-  // домовленості, а не з двох уточнювальних питань з обох боків.
-  const orderMessage = (): string => {
-    const chosen = product.size_variants.find((v) => v.id === sizeId);
+  // Повідомлення менеджеру: назва, номер, розмір(и) і ціна — щоб діалог починався з
+  // домовленості, а не з двох уточнювальних питань з обох боків. Злита картка може
+  // складатися з кількох номерів — тоді кожен розмір іде зі СВОЇМ номером у дужках.
+  // ⚠️ Формат читає вебхук Business (tg_business.py: «Розмір:»/«Розміри:», «#номер»).
+  const pnOf = (v: SizeVariant): string => v.productnumber || product.productnumber;
+  const orderMessage = (chosen: SizeVariant[]): string => {
     const price = onSale && priceOriginal
       ? `${formatPrice(shownPrice)} (замість ${formatPrice(priceOriginal)})`   // formatPrice уже дає «грн»
       : formatPrice(shownPrice);
+    const numbers = new Set(chosen.map(pnOf));
+    const sizes = chosen.map((v) => variantLabel(v) + (numbers.size > 1 ? ` (${pnOf(v)})` : ''));
     return [
       'Доброго дня! Цікавить товар:',
       '',
-      `${titleText} — ${product.productnumber}`,
-      chosen ? `Розмір: ${variantLabel(chosen)}` : null,
-      `Ціна: ${price}`,
+      numbers.size > 1 ? titleText : `${titleText} — ${chosen[0] ? pnOf(chosen[0]) : product.productnumber}`,
+      sizes.length ? `${sizes.length > 1 ? 'Розміри' : 'Розмір'}: ${sizes.join(', ')}` : null,
+      `Ціна: ${chosen.length > 1 ? `${chosen.length} × ` : ''}${price}`,
     ].filter((l) => l !== null).join('\n');
   };
 
@@ -524,13 +514,25 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
       .catch(() => { /* буфер недоступний — нічого не робимо, посилання видно в адресі */ });
   };
 
+  // Розмірів кілька — спершу діалог вибору; один чи жодного — одразу в чат
   const handleContact = () => {
-    if (askForSize()) return;
+    if (product.size_variants.length > 1) {
+      haptic('light');
+      setSizeSheet(true);
+      return;
+    }
+    sendOrder(product.size_variants);
+  };
+
+  const sendOrder = (chosen: SizeVariant[]) => {
     haptic('medium');
-    const chosen = product.size_variants.find((v) => v.id === sizeId);
-    trackCatalogEvent('contact_click', product.productnumber,
-      { channel: 'telegram', size: chosen ? variantLabel(chosen) : undefined });
-    contactSeller(sellerUsername, orderMessage());
+    setSizeSheet(false);
+    trackCatalogEvent('contact_click', product.productnumber, {
+      channel: 'telegram',
+      size: chosen.length ? chosen.map(variantLabel).join(', ') : undefined,
+      items: chosen.map((v) => ({ pn: pnOf(v), size: variantLabel(v) })),
+    });
+    contactSeller(sellerUsername, orderMessage(chosen));
   };
 
   // Запит реальних фото (стан не «Новий»). Навмисно НЕ contact_click і БЕЗ фрази
@@ -538,9 +540,9 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   // «Замовлення» як замовлення, а це лише прохання показати пару.
   const handlePhotoRequest = () => {
     haptic('light');
-    const chosen = product.size_variants.find((v) => v.id === sizeId);
+    const only = product.size_variants.length === 1 ? product.size_variants[0] : undefined;
     contactSeller(sellerUsername, `Вітаю! Прошу зробити реальні фото товару ${product.productnumber}`
-      + `, ${titleText}${chosen ? `, ${variantLabel(chosen)}` : ''}.`);
+      + `, ${titleText}${only ? `, ${variantLabel(only)}` : ''}.`);
   };
 
   // ♥️ на сторінці товару: перемикаємо обране й оновлюємо лічильник у стані картки
@@ -683,9 +685,6 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   const variantLabel = (v: typeof product.size_variants[number]): string =>
     v.sizeeu ? `${v.sizeeu} EU` : v.size_letter ?? (v.measurementscm ? `${v.measurementscm} см` : 'один розмір');
 
-  // Вибір показуємо лише там, де є з чого вибирати (ростовка). Один розмір лишається
-  // інформаційною пігулкою — зайвий крок на шляху до замовлення нікому не потрібен.
-  const pickable = product.size_variants.length > 1;
 
   const materialRows = MATERIAL_ORDER
     .filter((position) => product.materials[position]?.length)
@@ -811,9 +810,9 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
         </div>
 
         {product.size_variants.length > 0 && (
-          <div className={`detail-card${sizesFlash ? ' flash' : ''}`} ref={sizesRef}>
+          <div className="detail-card">
             <h3>
-              {pickable ? 'Оберіть розмір' : 'Розміри в наявності'}
+              Розміри в наявності
               {hints.sizes && <InfoButton id="sizes" open={hint === 'sizes'} onToggle={toggleHint} label="Про розміри й заміри" />}
             </h3>
             {hint === 'sizes' && (
@@ -822,26 +821,15 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
                 {hints.sizes_note && <span className="hint-line hint-note">{hints.sizes_note}</span>}
               </HintText>
             )}
+            {/* Інформаційні пігулки: обирають розмір у діалозі «Замовити» (SizeSheet) */}
             <div className="filter-options">
               {product.size_variants.map((variant) => (
-                pickable ? (
-                  <button type="button" key={variant.id}
-                    className={`size-pill pickable${sizeId === variant.id ? ' on' : ''}`}
-                    aria-pressed={sizeId === variant.id}
-                    onClick={() => { haptic('light'); setSizeId(variant.id); setSizesFlash(false); }}>
-                    {variantLabel(variant)}
-                    {variant.measurementscm && variant.sizeeu && (
-                      <span className="option-count">{variant.measurementscm} см</span>
-                    )}
-                  </button>
-                ) : (
-                  <span className="size-pill" key={variant.id}>
-                    {variantLabel(variant)}
-                    {variant.measurementscm && variant.sizeeu && (
-                      <span className="option-count">{variant.measurementscm} см</span>
-                    )}
-                  </span>
-                )
+                <span className="size-pill" key={variant.id}>
+                  {variantLabel(variant)}
+                  {variant.measurementscm && variant.sizeeu && (
+                    <span className="option-count">{variant.measurementscm} см</span>
+                  )}
+                </span>
               ))}
             </div>
           </div>
@@ -931,6 +919,11 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
           </button>
         )}
       </div>
+
+      {sizeSheet && (
+        <SizeSheet variants={product.size_variants} label={variantLabel}
+          onOrder={sendOrder} onClose={closeSizeSheet} />
+      )}
 
       {zoomAt !== null && product.images.length > 0 && (
         <Lightbox images={product.images} index={zoomAt} alt={titleText}

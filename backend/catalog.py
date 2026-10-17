@@ -1028,9 +1028,11 @@ async def get_catalog_product(
 
     # Розміри: для номера (ростовка) АБО для всіх номерів тієї ж пропозиції
     # (group_offers) — щоб злита картка показувала повну ростовку всіх завозів.
+    # Кожен розмір несе СВІЙ номер: «Замовити» 40-й розмір злитої картки має назвати
+    # менеджеру й записати в «Замовлення» номер саме цієї пари (напр. #Ф1067-2).
     size_rows = db.execute(
         text(f"""
-            SELECT p.id, p.sizeeu, p.sizeua, p.size_letter, p.measurementscm,
+            SELECT p.id, p.productnumber, p.sizeeu, p.sizeua, p.size_letter, p.measurementscm,
                    GREATEST(COALESCE(p.quantity, 0) - COALESCE(sold.sold_count, 0), 0) AS available
             FROM products p
             LEFT JOIN statuses s ON p.statusid = s.id

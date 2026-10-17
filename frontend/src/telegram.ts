@@ -97,12 +97,23 @@ export const hapticSelect = (): void => {
 };
 
 // Кнопка «Назад» Telegram; повертає cleanup для useEffect
+// Лист поверх картки (вибір розміру) перехоплює «Назад»: закриває себе, а не картку
+const backLayers: Array<() => void> = [];
+export const pushBackLayer = (close: () => void): (() => void) => {
+  backLayers.push(close);
+  return () => {
+    const i = backLayers.lastIndexOf(close);
+    if (i >= 0) backLayers.splice(i, 1);
+  };
+};
+
 export const showBackButton = (onBack: () => void): (() => void) => {
   if (!isInTelegram) return () => {};
-  tg!.BackButton.onClick(onBack);
+  const handler = () => (backLayers[backLayers.length - 1] ?? onBack)();
+  tg!.BackButton.onClick(handler);
   tg!.BackButton.show();
   return () => {
-    tg!.BackButton.offClick(onBack);
+    tg!.BackButton.offClick(handler);
     tg!.BackButton.hide();
   };
 };
