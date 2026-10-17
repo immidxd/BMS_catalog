@@ -6,6 +6,7 @@ import { Tech, parseTechnologies } from '../techLogos';
 import { contactInstagram, contactPhone, contactSeller, contactViber, haptic, isInTelegram, shareViaTelegram, showBackButton } from '../telegram';
 import { productUrl } from '../deepLink';
 import { hintSeen, markHintSeen, touchUi } from '../onboarding';
+import { colorDotBackground } from '../colorDot';
 import { Lightbox } from './Lightbox';
 import { SizeSheet } from './SizeSheet';
 import { trackCatalogEvent } from '../analytics';
@@ -709,6 +710,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   // Технології моделі (GORE-TEX, Vibram…) — важливий аргумент вибору. Парсимо
   // «брудний» рядок у бейджі; лого — з маніфесту R2 (за слагом або аліасом з BMS).
   const techs = parseTechnologies(product.technology);
+  const colorDot = colorDotBackground(product.colorname);   // кружечок біля «Колір» (colorDot.ts)
   const logoFor = (t: Tech) => techLogos.find((l) => l.slug === t.slug
     || l.aliases.includes(t.label.toLowerCase()));
   const techTerms = techs.filter((t) => hints.tech?.[t.slug]);
@@ -915,7 +917,10 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
                   {specHint[key] && <InfoButton id={key} open={hint === key} onToggle={toggleHint} label={`Про: ${key}`}
                     alert={alertKeys.has(key)} />}
                 </span>
-                <span className="spec-val">{capSlash(value)}</span>
+                <span className="spec-val">
+                  {key === 'Колір' && colorDot && <span className="color-dot" style={{ background: colorDot }} aria-hidden="true" />}
+                  {capSlash(value)}
+                </span>
               </div>
               {hint === key && specHint[key] && <HintText onClose={closeHint}>{specHint[key]}</HintText>}
             </React.Fragment>
