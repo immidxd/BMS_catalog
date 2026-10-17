@@ -364,6 +364,20 @@ def _row_key(tg_user_id: int) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"tg:{tg_user_id}"))
 
 
+# Власні акаунти магазину: їхні «Замовити» — тести власника, а не замовлення, і в
+# живий документ потрапляти не мають. 7293475623 — BrandStoreua (визначено 2026-10-17
+# за ключем тестового рядка «Замовлень»). Адміни з ADMIN_TG_IDS — завжди; інші
+# акаунти (менеджер тощо) — без деплою, через env CATALOG_ORDER_SKIP_TG_IDS (через кому).
+_OWN_ACCOUNTS = {7293475623}
+
+
+def is_own_account(tg_user_id: int) -> bool:
+    ids = set(_OWN_ACCOUNTS)
+    for var in ("ADMIN_TG_IDS", "CATALOG_ORDER_SKIP_TG_IDS"):
+        ids |= {int(x) for x in os.getenv(var, "").replace(" ", "").split(",") if x.isdigit()}
+    return int(tg_user_id) in ids
+
+
 def place_order(tg_user_id: int, productnumber: str, size: Optional[str],
                          buyer: Optional[Dict[str, str]] = None) -> None:
     """Фонове створення замовлення. Кличеться ЛИШЕ тоді, коли покупця підтвердив
@@ -373,8 +387,13 @@ def place_order(tg_user_id: int, productnumber: str, size: Optional[str],
     Ціну беремо з БД, а не з клієнта: у документ власника має потрапляти те саме
     число, що показує вітрина, і його не можна підмінити з браузера.
     Невідомого номера в документі бути не може — такий виклик просто ігноруємо.
+    Сюди сходяться ОБИДВА шляхи (клік у каталозі й лист у Business), тож перевірка
+    власних акаунтів тут закриває обидва.
     """
     if not enabled():
+        return
+    if is_own_account(tg_user_id):
+        logger.info("[orders] власний акаунт магазину (%s) — тест, рядок не створюю", tg_user_id)
         return
     try:
         from database import SessionLocal
