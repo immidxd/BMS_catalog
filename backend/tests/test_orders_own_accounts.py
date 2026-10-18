@@ -57,3 +57,13 @@ def test_warehouse_staff_is_skipped(monkeypatch):
     # Персонал складу (wh_staff, активний) — свої: працюють із товаром, а не купують
     monkeypatch.setitem(sys.modules, "warehouse", types.SimpleNamespace(_staff_ids=lambda: {4242}))
     assert not _reaches_db(monkeypatch, 4242)
+
+
+def test_own_account_by_username(monkeypatch):
+    # Друг-тестувальник без відомого tg-id — за ніком (відбиток у коді або env)
+    monkeypatch.setattr(orders_sheet, "enabled", lambda: True)
+    monkeypatch.setitem(sys.modules, "database", types.SimpleNamespace(SessionLocal=lambda: (_ for _ in ()).throw(_Reached())))
+    orders_sheet.place_order(999001, "#Ф1", None, {"name": "Саня", "username": "@Esquire_C"})   # не дійшов до БД
+    monkeypatch.setenv("CATALOG_OWN_USERNAMES", "tester_x")
+    import own_accounts
+    assert own_accounts.is_own(5, "tester_x") and not own_accounts.is_own(5, "someone")

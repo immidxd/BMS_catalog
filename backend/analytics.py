@@ -222,10 +222,11 @@ async def record_event(
     key = visitor_key(x_telegram_init_data, payload.get("user_id"), x_catalog_visitor)
     # Свій акаунт або пристрій власника (internal ставить фронт після адмін-режиму):
     # подію не пишемо, а ключ — у реєстр, щоб і давніші події цього відвідувача не рахувались
-    uid = telegram_user_from_init_data(x_telegram_init_data or "")
+    profile = telegram_profile_from_init_data(x_telegram_init_data or "") or {}
+    uid = profile.get("id")
     if uid is None and isinstance(payload.get("user_id"), int):
         uid = payload["user_id"]
-    if payload.get("internal") is True or (uid is not None and own_accounts.is_own(uid)):
+    if payload.get("internal") is True or (uid is not None and own_accounts.is_own(uid, profile.get("username"))):
         register_internal(db, key)
         db.commit()
         return {"accepted": False}

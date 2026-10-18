@@ -400,7 +400,7 @@ def place_order(tg_user_id: int, productnumber: str, size: Optional[str],
     """
     if not enabled():
         return
-    if is_own_account(tg_user_id):
+    if is_own_account(tg_user_id, (buyer or {}).get("username")):
         logger.info("[orders] власний акаунт магазину (%s) — тест, рядок не створюю", tg_user_id)
         return
     try:
