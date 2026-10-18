@@ -332,6 +332,28 @@ export const setFeaturedOrder = async (productnumbers: string[], auth: AdminAuth
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 };
 
+// «Оновити» в панелі рекомендованих: інші товари під поточний сезон (нічого не пише)
+export const fetchFeaturedCandidates = async (count: number, exclude: string[], auth: AdminAuth): Promise<CatalogItem[]> => {
+  const headers: Record<string, string> = {};
+  if (auth.initData) headers['X-Telegram-Init-Data'] = auth.initData;
+  else if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+  const q = new URLSearchParams({ count: String(count), exclude: exclude.join(',') });
+  const res = await fetch(`/api/admin/catalog/featured-candidates?${q}`, { headers });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()).items;
+};
+
+// Замінити набір рекомендованих (у порядку показу) одним записом
+export const setFeaturedSet = async (productnumbers: string[], auth: AdminAuth): Promise<void> => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (auth.initData) headers['X-Telegram-Init-Data'] = auth.initData;
+  else if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+  const res = await fetch('/api/admin/catalog/featured-set', {
+    method: 'PATCH', headers, body: JSON.stringify({ productnumbers }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+};
+
 export const formatPrice = (price: number): string =>
   `${new Intl.NumberFormat('uk-UA').format(price)} грн`;
 

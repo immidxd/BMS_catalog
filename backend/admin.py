@@ -7,7 +7,7 @@ read-only й цього роутера не торкається.
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -157,6 +157,98 @@ async def set_featured_order(
             INSERT INTO catalog_listings (productnumber, is_published, is_featured, featured_order, updated_at)
             VALUES (:pn, TRUE, TRUE, :ord, now())
             ON CONFLICT (productnumber) DO UPDATE SET featured_order = :ord, updated_at = now()
+        """), {"pn": pn, "ord": i})
+    db.commit()
+    return {"count": len(pns)}
+
+
+def _require_admin(authorization: Optional[str], x_telegram_init_data: Optional[str]) -> None:
+    if not admin_writes_enabled():
+        raise HTTPException(status_code=503, detail="Адмін-запис не налаштовано")
+    if not authorize_admin(authorization, x_telegram_init_data):
+        raise HTTPException(status_code=401, detail="Не авторизовано")
+
+
+@router.get("/api/admin/catalog/featured-candidates", response_model=Dict[str, Any])
+async def featured_candidates(
+    count: int = Query(8, ge=1, le=40),
+    exclude: str = Query(""),                       # номери через кому — уже показані в панелі
+    authorization: Optional[str] = Header(None),
+    x_telegram_init_data: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Адмін, «Оновити» в панелі рекомендованих: інші товари під поточний сезон.
+
+    Лише те, що й так у вітрині: опубліковане, наявне, зі студійним фото, не
+    рекомендоване й не з exclude. Спершу — сезони актуальних чіпів місяця (жовтень:
+    Демі/Зима/Єврозима), далі решта доречного (без «лише несезонних»); усередині —
+    випадково, щоб кожне «Оновити» давало новий набір. Злиті пропозиції (той самий
+    товар під різними номерами) — по одному номеру. Нічого не пише."""
+    _require_admin(authorization, x_telegram_init_data)
+    from catalog import _FULL_JOINS, _AVAILABLE_WHERE, _off_seasons, season_chips
+    from images import main_image_url, official_photo_productnumbers
+
+    live = sorted({s for chip in season_chips() for s in chip["seasons"]})
+    skip = [p.strip() for p in exclude.split(",") if p.strip()]
+    rows = db.execute(text(f"""
+        SELECT p.productnumber AS pn, MIN(p.id) AS id, MIN(b.brandname) AS brand, MIN(p.model) AS model,
+               MIN(t.typename) AS type, MIN(p.price) AS price,
+               MIN(cl.sale_price) FILTER (WHERE cl.is_on_sale AND cl.sale_price < p.price) AS sale_price,
+               MIN(p.official_photos_from) AS of,
+               MIN(p.brandid) AS b, MIN(p.typeid) AS ty, MIN(p.colorid) AS c,
+               lower(btrim(coalesce(MIN(p.model), ''))) AS m, lower(btrim(coalesce(MIN(p.season), ''))) AS s
+        {_FULL_JOINS}
+        WHERE {_AVAILABLE_WHERE}
+          AND COALESCE(cl.is_published, FALSE) AND NOT COALESCE(cl.is_featured, FALSE)
+          AND (BTRIM(LTRIM(p.productnumber, '#')) = ANY(:photo_pns)
+               OR BTRIM(COALESCE(p.official_photos_from, '')) = ANY(:photo_pns))
+          AND NOT (p.productnumber = ANY(:skip))
+        GROUP BY p.productnumber
+        HAVING NOT COALESCE(string_to_array(replace(NULLIF(btrim(MIN(p.season)), ''), ' ', ''), ',')
+                            <@ CAST(:off AS text[]), FALSE)
+        ORDER BY COALESCE(string_to_array(replace(NULLIF(btrim(MIN(p.season)), ''), ' ', ''), ',')
+                          && CAST(:live AS text[]), FALSE) DESC, random()
+        LIMIT 300
+    """), {"photo_pns": list(official_photo_productnumbers()), "skip": skip,
+           "off": _off_seasons(), "live": live}).mappings().all()
+
+    seen, items = set(), []
+    for r in rows:
+        sig = (r["b"], r["ty"], r["c"], r["m"], r["s"], r["price"])
+        if sig in seen:
+            continue
+        seen.add(sig)
+        items.append({
+            "id": r["id"], "productnumber": r["pn"], "brand": r["brand"], "model": r["model"],
+            "type": r["type"], "price": float(r["price"]),
+            "sale_price": float(r["sale_price"]) if r["sale_price"] is not None else None,
+            "image": main_image_url(r["pn"], r["of"] or "", official_only=True), "featured": True,
+        })
+        if len(items) >= count:
+            break
+    return {"items": items}
+
+
+@router.patch("/api/admin/catalog/featured-set", response_model=Dict[str, Any])
+async def set_featured_set(
+    productnumbers: List[str] = Body(..., embed=True),   # НОВИЙ набір рекомендованих у порядку показу
+    authorization: Optional[str] = Header(None),
+    x_telegram_init_data: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Адмін: замінити набір рекомендованих («Оновити» в панелі) одним записом —
+    перелічені стають рекомендованими в цьому порядку, решта рекомендованих —
+    звичайними. «Рекомендований» лише для опублікованого, як і в тумблері."""
+    _require_admin(authorization, x_telegram_init_data)
+    pns = list(dict.fromkeys(p.strip() for p in (productnumbers or []) if p and p.strip()))
+    db.execute(text("""
+        UPDATE catalog_listings SET is_featured = FALSE, updated_at = now()
+        WHERE is_featured AND NOT (productnumber = ANY(:pns))
+    """), {"pns": pns})
+    for i, pn in enumerate(pns):
+        db.execute(text("""
+            UPDATE catalog_listings SET is_featured = is_published, featured_order = :ord, updated_at = now()
+            WHERE productnumber = :pn
         """), {"pn": pn, "ord": i})
     db.commit()
     return {"count": len(pns)}

@@ -1,6 +1,6 @@
 // TG Shop — каталог: пошук, фільтри, сітка товарів, сторінка товару
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CatalogItem, CatalogQuery, Facets, FilterOptions, Hints, SeasonChip, ShopInfoSection, TechLogo, fetchConfig, formatPrice, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, syncFavorites } from './api';
+import { CatalogItem, CatalogQuery, Facets, FilterOptions, Hints, SeasonChip, ShopInfoSection, TechLogo, fetchConfig, formatPrice, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, setFeaturedSet, fetchFeaturedCandidates, syncFavorites } from './api';
 import { HowToBuySheet } from './components/HowToBuySheet';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
 import { ReorderSheet } from './components/ReorderSheet';
@@ -271,15 +271,24 @@ export const App = () => {
   const featuredItems = useMemo(() => displayItems.filter((i) => i.featured), [displayItems]);
 
   // Зберегти новий порядок: одразу застосувати у сітці (override) + на сервер (з retry)
-  const saveReorder = (order: string[]) => {
+  // replaced — «Оновити» змінив сам набір: пишемо його цілком і перечитуємо сітку
+  const saveReorder = (order: string[], replaced = false) => {
     setFeatOrder(order);
     const trySave = () => {
       const auth = adminAuth(trySave);
       if (!auth) return;
-      setFeaturedOrder(order, auth).then(() => haptic('light'))
-        .catch(() => handleAdminAuthFailure('Не вдалося зберегти порядок — перевірте адмін-токен.', trySave));
+      (replaced ? setFeaturedSet(order, auth) : setFeaturedOrder(order, auth))
+        .then(() => { haptic('light'); if (replaced) retry(); })
+        .catch(() => handleAdminAuthFailure('Не вдалося зберегти рекомендовані — перевірте адмін-токен.', trySave));
     };
     trySave();
+  };
+
+  // «Оновити» в панелі: інші товари під поточний сезон (лише пропозиція, без запису)
+  const loadFeaturedCandidates = async (count: number, exclude: string[]): Promise<CatalogItem[]> => {
+    const auth = adminAuth(() => {});
+    if (!auth) return [];
+    return fetchFeaturedCandidates(count, exclude, auth);
   };
 
   // Нескінченний скрол: сторож унизу сітки. Перевіряємо близькість сторожа до
@@ -593,6 +602,7 @@ export const App = () => {
         <ReorderSheet
           featured={featuredItems}
           onSave={saveReorder}
+          loadCandidates={adminWrites ? loadFeaturedCandidates : undefined}
           onClose={() => setReorderOpen(false)}
         />
       )}
