@@ -9,7 +9,7 @@ import { hintSeen, markHintSeen, touchUi } from '../onboarding';
 import { colorDotBackground } from '../colorDot';
 import { Lightbox } from './Lightbox';
 import { SizeSheet } from './SizeSheet';
-import { SeasonValue } from './SeasonIcon';
+import { ConditionIcon, SeasonValue } from './SpecIcons';
 import { trackCatalogEvent } from '../analytics';
 
 type Props = {
@@ -715,6 +715,10 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
   const logoFor = (t: Tech) => techLogos.find((l) => l.slug === t.slug
     || l.aliases.includes(t.label.toLowerCase()));
   const techTerms = techs.filter((t) => hints.tech?.[t.slug]);
+  // Міні-лого технології біля матеріалу, де вона згадана («Мембрана: Gore-tex», «Підошва:
+  // Vibram») — за назвою чи аліасом з маніфесту лого, цілим словом
+  const logosIn = (value: string): TechLogo[] => techLogos.filter((l) => [l.label, ...l.aliases].some((a) =>
+    new RegExp(`(^|[^\\p{L}])${a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}])`, 'iu').test(value)));
   // «Медалі» на фото — лише технології з лого, до трьох, без дублів
   const medals = techs.map(logoFor).filter((l, i, all): l is TechLogo => !!l && all.indexOf(l) === i)
     .slice(0, 3);
@@ -920,6 +924,7 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
                 </span>
                 <span className="spec-val">
                   {key === 'Колір' && colorDot && <span className="color-dot" style={{ background: colorDot }} aria-hidden="true" />}
+                  {key === 'Стан' && value && <ConditionIcon condition={value} />}
                   {key === 'Сезон' && value ? <SeasonValue text={capSlash(value) ?? value} /> : capSlash(value)}
                 </span>
               </div>
@@ -940,7 +945,10 @@ const ProductSheet = ({ product, onPatch, isFavorite, onToggleFav, adminAuth, on
             {materialRows.map(([key, value]) => (
               <div className="spec-row" key={key}>
                 <span className="spec-key">{key}</span>
-                <span className="spec-val">{value}</span>
+                <span className="spec-val">
+                  {logosIn(value).map((l) => <img className="mat-logo" src={l.url} alt="" key={l.slug} loading="lazy" />)}
+                  {value}
+                </span>
               </div>
             ))}
           </div>
