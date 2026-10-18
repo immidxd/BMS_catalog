@@ -167,6 +167,7 @@ HINTS: Dict[str, Any] = {
         "cloudfoam": "Cloudfoam: м'яка амортизуюча піна adidas",
         "boost": "Boost: пружна піна adidas",
         "rieker-antistress": "Rieker Antistress: легка й гнучка підошва Rieker",
+        "xl-extralight": "XL Extralight: надлегка підошва, що м'яко гасить удари",
     },
 }
 
