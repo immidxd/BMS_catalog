@@ -1,9 +1,11 @@
 // TG Shop — каталог: пошук, фільтри, сітка товарів, сторінка товару
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CatalogItem, CatalogQuery, Facets, FilterOptions, Hints, SeasonChip, ShopInfoSection, TechLogo, fetchConfig, formatPrice, fetchFacets, fetchFilters, fetchViews, setCatalogPublication, setFeaturedOrder, setFeaturedSet, fetchFeaturedCandidates, syncFavorites } from './api';
 import { HowToBuySheet } from './components/HowToBuySheet';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
 import { ReorderSheet } from './components/ReorderSheet';
+import { CoachMark } from './components/CoachMark';
+import { hintSeen, markHintSeen } from './onboarding';
 import { ScrollJump } from './components/ScrollJump';
 import { ProductCard, SkeletonCard } from './components/ProductCard';
 import { ProductPage } from './components/ProductPage';
@@ -50,6 +52,9 @@ export const App = () => {
   );
   const [filterOptions, setFilterOptions] = useState<FilterOptions | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
+  // Підказка «Фільтри» (onboarding.ts): уперше чи після 30+ днів — коли сітка вже є
+  const filterBtnRef = useRef<HTMLButtonElement>(null);
+  const [filtersHint, setFiltersHint] = useState(false);
   // Прямий вхід за посиланням (/t/<id> або ?startapp=<id> у Telegram) — товар
   // відкривається одразу, ще до того, як довантажиться сітка каталогу.
   const [productId, setProductId] = useState<number | null>(initialProductId);
@@ -101,6 +106,16 @@ export const App = () => {
   const queryKey = JSON.stringify(queryDraft);
   const effectiveQuery = useMemo(() => queryDraft, [queryKey]);
   const { items, total, isLoading, error, loadMore, retry, patchItem } = useCatalog(effectiveQuery);
+
+  // Підказка «Фільтри»: пауза — щоб людина спершу побачила товари; лише коли поверх
+  // нічого не відкрито. Хто вже сам відкрив фільтри — підказки не побачить (markHintSeen).
+  const hasItems = items.length > 0;
+  useEffect(() => {
+    if (!hasItems || filtersHint || hintSeen('filters') || isSheetOpen || productId !== null) return;
+    const t = window.setTimeout(() => { markHintSeen('filters'); setFiltersHint(true); }, 1500);
+    return () => window.clearTimeout(t);
+  }, [hasItems, isSheetOpen, productId]);
+  const closeFiltersHint = useCallback(() => setFiltersHint(false), []);
 
   // Синк обраного → серверний лічильник (ідемпотентно), щоб counts «наздогнали» те,
   // що вже в обраному (старий бандл/інший пристрій). Оновлюємо override-лічильники.
@@ -453,7 +468,8 @@ export const App = () => {
           <button
             type="button"
             className="icon-btn"
-            onClick={() => { haptic('light'); setIsSheetOpen(true); }}
+            ref={filterBtnRef}
+            onClick={() => { haptic('light'); markHintSeen('filters'); setIsSheetOpen(true); }}
             aria-label="Фільтри"
             disabled={!filterOptions}
           >
@@ -596,6 +612,10 @@ export const App = () => {
           onApply={(next) => { setFavView(false); setQuery({ ...next, search: undefined, sort: query.sort }); }}
           onClose={() => setIsSheetOpen(false)}
         />
+      )}
+
+      {filtersHint && !isSheetOpen && productId === null && (
+        <CoachMark target={filterBtnRef.current} text="Фільтри: розмір, бренд, ціна" onDone={closeFiltersHint} />
       )}
 
       {reorderOpen && featuredItems.length > 0 && (

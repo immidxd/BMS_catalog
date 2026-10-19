@@ -1,9 +1,11 @@
 // Нижній лист гнучких фільтрів каталогу — компактний акордеон зі згорнутими
 // секціями: користувач бачить охайний перелік, розгортає лише потрібне.
-import { ReactNode, useEffect, useMemo, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CatalogQuery, Facets, FilterOption, FilterOptions, capSlash, fetchCatalog, fetchFacets, formatPrice } from '../api';
 import { useDebounced } from '../hooks/useCatalog';
 import { haptic, hapticSelect } from '../telegram';
+import { hintSeen, markHintSeen } from '../onboarding';
+import { CoachMark } from './CoachMark';
 
 // ── Стать: вид (за назвою) + іконка-гліф (як у BMS) ─────────────────────────
 type GenderKind = 'female' | 'male' | 'unisex';
@@ -133,6 +135,17 @@ const SearchableChips = ({ options, selectedIds, query, onQueryChange, onToggle,
 export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onApply, onClose }: Props) => {
   const [draft, setDraft] = useState<CatalogQuery>(query);
   const [draftTotal, setDraftTotal] = useState(total);
+  // Підказка «Скинути» (onboarding.ts): уперше, коли кнопка з'являється (обрано перший
+  // фільтр) — новачок інакше не знає, як повернути все назад. Пауза — дати дотиснути вибір.
+  const resetRef = useRef<HTMLButtonElement>(null);
+  const [resetHint, setResetHint] = useState(false);
+  const hasActive = countActiveFilters(draft) > 0;
+  useEffect(() => {
+    if (!hasActive || hintSeen('filters-reset')) return;
+    const t = window.setTimeout(() => { markHintSeen('filters-reset'); setResetHint(true); }, 700);
+    return () => window.clearTimeout(t);
+  }, [hasActive]);
+  const closeResetHint = useCallback(() => setResetHint(false), []);
   // Розмір/Колір/Стать — розгорнуті за замовчуванням; решта — за кліком
   const [openSections, setOpenSections] = useState<Set<string>>(() => new Set(['size', 'color', 'gender']));
   const [typeQuery, setTypeQuery] = useState('');
@@ -254,7 +267,8 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
         <div className="sheet-header">
           <h2>Фільтри</h2>
           {countActiveFilters(draft) > 0 && (
-            <button type="button" className="sheet-reset" onClick={handleReset}>
+            <button type="button" className="sheet-reset" ref={resetRef}
+              onClick={() => { markHintSeen('filters-reset'); handleReset(); }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" />
               </svg>
@@ -424,6 +438,9 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
           )}
         </div>
 
+        {resetHint && hasActive && (
+          <CoachMark target={resetRef.current} text="Тут можна скинути всі фільтри" onDone={closeResetHint} />
+        )}
         <div className="sheet-footer">
           <button type="button" className="btn-primary" onClick={handleApply} disabled={draftTotal === 0}>
             {draftTotal > 0 ? `Показати ${draftTotal} товарів` : 'Нічого не знайдено'}

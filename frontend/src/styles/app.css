@@ -1737,6 +1737,61 @@ button {
   .scroll-fab { transition: none; }
 }
 
+/* Разова вказівка на кнопку (CoachMark): пульсуюче кільце + плашка зі стрілочкою.
+   Не ловить дотики — будь-який тап проходить до інтерфейсу й ховає підказку. */
+.coach { position: fixed; inset: 0; z-index: 58; pointer-events: none; transition: opacity 180ms var(--ease); }
+.coach.out { opacity: 0; }
+.coach-ring {
+  position: fixed;
+  border-radius: 14px;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 0 0 rgba(255, 255, 255, 0.5);
+  animation: coach-ring 1.4s var(--ease) 2 both;
+}
+:root:not([data-theme='dark']) .coach-ring { animation-name: coach-ring-dark; }
+.coach-bubble {
+  position: fixed;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(20, 20, 20, 0.86);
+  color: #fff;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-md);
+  font-size: var(--text-base);
+  line-height: 1.35;
+  text-align: center;
+  animation: coach-in var(--dur-med) var(--ease) both, coach-nudge 1.4s ease-in-out 0.25s 2;
+}
+.coach-arrow {
+  position: absolute;
+  top: -6px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  transform: rotate(45deg);
+  background: rgba(20, 20, 20, 0.86);
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+@keyframes coach-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* «тицяє» в кнопку: легкий рух угору й назад */
+@keyframes coach-nudge { 0%, 100% { transform: none; } 40% { transform: translateY(-5px); } 60% { transform: translateY(-1px); } }
+@keyframes coach-ring {
+  0% { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 0 0 rgba(255, 255, 255, 0.45); }
+  70% { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 0 10px rgba(255, 255, 255, 0); }
+  100% { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 0 0 rgba(255, 255, 255, 0); }
+}
+@keyframes coach-ring-dark {
+  0% { box-shadow: 0 0 0 2px rgba(20, 20, 20, 0.85), 0 0 0 0 rgba(20, 20, 20, 0.3); }
+  70% { box-shadow: 0 0 0 2px rgba(20, 20, 20, 0.85), 0 0 0 10px rgba(20, 20, 20, 0); }
+  100% { box-shadow: 0 0 0 2px rgba(20, 20, 20, 0.85), 0 0 0 0 rgba(20, 20, 20, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .coach-ring, .coach-bubble { animation: none; }
+}
+
 /* Підказка «гортайте» для новачків: по центру екрана, легка, зникає від будь-якого
    дотику або сама за ~3.5 с. Рука показує жест; data-dir — куди можна гортати. */
 .swipe-hint {
