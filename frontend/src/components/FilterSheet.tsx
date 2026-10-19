@@ -235,6 +235,27 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
     onClose();
   };
 
+  // Десктоп (миша, широке вікно): сітку видно поряд із панеллю — фільтри діють одразу,
+  // без «Показати» (debounce об'єднує серію кліків). На телефоні шторка закриває
+  // сітку, тож там лишається підтвердження з живим лічильником — як у Zalando/ASOS.
+  const instant = useMemo(() =>
+    window.matchMedia?.('(min-width: 768px) and (hover: hover) and (pointer: fine)').matches ?? false, []);
+  const initial = useRef(JSON.stringify(query));
+  const firstDraft = useRef(true);
+  useEffect(() => {
+    if (!instant) return;
+    if (firstDraft.current) { firstDraft.current = false; return; }
+    onApply(debouncedDraft);
+  }, [debouncedDraft]);
+
+  // Тап поза шторкою = «Показати»: вибір не губиться. Нічого не змінено — просто
+  // закриваємо (не скидаємо, напр., «Обране»); 0 товарів — теж лише закриваємо, як і
+  // вимкнена кнопка. На десктопі все вже застосовано по ходу.
+  const handleDismiss = () => {
+    if (!instant && JSON.stringify(draft) !== initial.current && draftTotal > 0) onApply(draft);
+    onClose();
+  };
+
   // Чіпи опцій-id (тип/стать/стан) з лічильниками
   const idChips = (key: IdKey, list: FilterOption[]) => list.map((opt) => (
     <button type="button" key={opt.id}
@@ -262,7 +283,7 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
 
   return (
     <>
-      <div className="sheet-backdrop" onClick={onClose} aria-hidden="true" />
+      <div className="sheet-backdrop" onClick={handleDismiss} aria-hidden="true" />
       <div className="sheet" role="dialog" aria-label="Фільтри">
         <div className="sheet-header">
           <h2>Фільтри</h2>
