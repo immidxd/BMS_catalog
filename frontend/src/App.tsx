@@ -5,6 +5,8 @@ import { HowToBuySheet } from './components/HowToBuySheet';
 import { FilterSheet, countActiveFilters } from './components/FilterSheet';
 import { ReorderSheet } from './components/ReorderSheet';
 import { CoachMark } from './components/CoachMark';
+import { AppliedFilters } from './components/AppliedFilters';
+import { queryFromUrl, syncQueryToUrl } from './filterUrl';
 import { hintSeen, markHintSeen } from './onboarding';
 import { ScrollJump } from './components/ScrollJump';
 import { ProductCard, SkeletonCard } from './components/ProductCard';
@@ -47,9 +49,12 @@ export const App = () => {
   const [search, setSearch] = useState('');
   // Адмін (?admin=1) одразу бачить ПУЛ кандидатів на публікацію (наявні з фото),
   // а не порожній публічний каталог — щоб було що вмикати 👁. Публіка — як було.
-  const [query, setQuery] = useState<CatalogQuery>(
-    hasAdminParam ? { ...DEFAULT_QUERY, only_published: false } : DEFAULT_QUERY,
-  );
+  // Старт — з фільтрів в адресі (посилання на добірку), інакше типові
+  const [query, setQuery] = useState<CatalogQuery>(() => ({
+    ...(hasAdminParam ? { ...DEFAULT_QUERY, only_published: false } : DEFAULT_QUERY),
+    ...queryFromUrl(),
+  }));
+  useEffect(() => { syncQueryToUrl(query); }, [query]);
   const [filterOptions, setFilterOptions] = useState<FilterOptions | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   // Підказка «Фільтри» (onboarding.ts): уперше чи після 30+ днів — коли сітка вже є
@@ -542,6 +547,11 @@ export const App = () => {
             </button>
           )}
         </div>
+        {/* Застосовані фільтри — кожен окремо, знімається одним тапом */}
+        <AppliedFilters query={query} options={filterOptions}
+          hideSeasons={seasonChips.some(seasonActive)}
+          hideTypeId={bagsActive ? bagType?.id : null}
+          onChange={(next) => { setFavView(false); setQuery(next); }} />
         {/* Лічильник: видно, що показано ВЕСЬ набір (сортування не обмежує список) */}
         {!error && total > 0 && (
           <div className="result-count">{isAdmin ? 'Кандидатів' : 'Товарів'}: {total}</div>
@@ -627,14 +637,6 @@ export const App = () => {
         />
       )}
 
-      {/* Десктоп: наведення курсору на лівий край відкриває фільтри */}
-      {filterOptions && !isSheetOpen && productId === null && (
-        <div
-          className="filter-hover-zone"
-          onMouseEnter={() => setIsSheetOpen(true)}
-          aria-hidden="true"
-        />
-      )}
 
       {/* Картка товару — оверлей поверх каталогу: повернення зберігає позицію скролу */}
       {productId !== null && (

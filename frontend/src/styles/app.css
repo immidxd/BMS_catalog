@@ -1103,35 +1103,7 @@ button {
   .lightbox { animation: none; }
 }
 
-/* Зона біля лівого краю екрана — наведення курсору відкриває фільтри (десктоп) */
-.filter-hover-zone { display: none; }
 
-@media (min-width: 768px) {
-  .filter-hover-zone {
-    display: block;
-    position: fixed;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 14px;
-    z-index: 30;
-  }
-  /* Тонка делікатна підказка-смужка, що ледь зʼявляється при наведенні */
-  .filter-hover-zone::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 3px;
-    height: 56px;
-    border-radius: 0 var(--radius-full) var(--radius-full) 0;
-    background: var(--fg-faint);
-    opacity: 0;
-    transition: opacity var(--dur-med) var(--ease);
-  }
-  .filter-hover-zone:hover::after { opacity: 0.6; }
-}
 
 .filter-label {
   font-size: var(--text-xs);
@@ -2084,3 +2056,10 @@ button {
     padding: var(--space-3) var(--space-6);
   }
 }
+
+/* Застосовані фільтри над сіткою: компактні чіпи з «×» (кожен знімається тапом) */
+.applied-row { padding-top: 0; }
+.chip-applied { gap: 5px; padding: 4px 9px 4px 11px; color: var(--fg); border-color: var(--fg-subtle); }
+.chip-applied svg { color: var(--fg-subtle); flex: none; }
+.chip-applied:active { transform: scale(0.96); }
+.applied-swatch { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px var(--border); }

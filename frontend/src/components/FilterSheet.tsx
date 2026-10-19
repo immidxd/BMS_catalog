@@ -3,7 +3,7 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CatalogQuery, Facets, FilterOption, FilterOptions, capSlash, fetchCatalog, fetchFacets, formatPrice } from '../api';
 import { useDebounced } from '../hooks/useCatalog';
-import { haptic, hapticSelect } from '../telegram';
+import { haptic, hapticSelect, showBackButton } from '../telegram';
 import { hintSeen, markHintSeen } from '../onboarding';
 import { CoachMark } from './CoachMark';
 
@@ -255,6 +255,17 @@ export const FilterSheet = ({ options, query, total, isAdmin, initialFacets, onA
     if (!instant && JSON.stringify(draft) !== initial.current && draftTotal > 0) onApply(draft);
     onClose();
   };
+
+  // «Назад» Telegram і Esc закривають шторку так само, як тап поза нею (вибір не губиться)
+  const dismissRef = useRef(handleDismiss);
+  dismissRef.current = handleDismiss;
+  useEffect(() => {
+    const close = () => dismissRef.current();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    const offBack = showBackButton(close);
+    return () => { window.removeEventListener('keydown', onKey); offBack(); };
+  }, []);
 
   // Чіпи опцій-id (тип/стать/стан) з лічильниками
   const idChips = (key: IdKey, list: FilterOption[]) => list.map((opt) => (
