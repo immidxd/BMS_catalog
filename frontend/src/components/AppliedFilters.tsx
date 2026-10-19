@@ -7,6 +7,10 @@ import { hapticSelect } from '../telegram';
 type Applied = { key: string; label: string; swatch?: string | null; drop: (q: CatalogQuery) => CatalogQuery };
 type IdKey = 'typeids' | 'genderids' | 'brandids' | 'color_group_ids' | 'conditionids';
 
+const LETTERS = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+const letterRank = (l: string) => { const i = LETTERS.indexOf(l.toUpperCase()); return i < 0 ? 99 : i; };
+const rank = (list: FilterOption[] | undefined, id: number) => { const i = list?.findIndex((o) => o.id === id) ?? -1; return i < 0 ? 1e9 : i; };
+
 const without = <T,>(list: T[] | undefined, v: T): T[] | undefined => {
   const next = (list ?? []).filter((x) => x !== v);
   return next.length ? next : undefined;
@@ -20,10 +24,11 @@ export const AppliedFilters = ({ query, options, hideSeasons, hideTypeId, onChan
   onChange: (next: CatalogQuery) => void;
 }) => {
   const items: Applied[] = [];
-  query.eu_sizes?.forEach((n) => items.push({ key: `eu${n}`, label: `${n} EU`, drop: (q) => ({ ...q, eu_sizes: without(q.eu_sizes, n) }) }));
-  query.size_letters?.forEach((l) => items.push({ key: `sz${l}`, label: l, drop: (q) => ({ ...q, size_letters: without(q.size_letters, l) }) }));
+  // Порядок — як у шторці, а не як клікали: розміри за зростанням, решта — за списком опцій
+  [...(query.eu_sizes ?? [])].sort((a, b) => a - b).forEach((n) => items.push({ key: `eu${n}`, label: `${n} EU`, drop: (q) => ({ ...q, eu_sizes: without(q.eu_sizes, n) }) }));
+  [...(query.size_letters ?? [])].sort((a, b) => letterRank(a) - letterRank(b)).forEach((l) => items.push({ key: `sz${l}`, label: l, drop: (q) => ({ ...q, size_letters: without(q.size_letters, l) }) }));
   const ids = (key: IdKey, list: FilterOption[] | undefined, skip?: number | null) =>
-    query[key]?.forEach((id) => {
+    [...(query[key] ?? [])].sort((a, b) => rank(list, a) - rank(list, b)).forEach((id) => {
       if (id === skip) return;
       const opt = list?.find((o) => o.id === id);
       if (!opt) return;
