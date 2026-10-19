@@ -638,6 +638,15 @@ export const App = () => {
       )}
 
 
+      {/* Десктоп: наведення курсору на лівий край відкриває фільтри */}
+      {filterOptions && !isSheetOpen && productId === null && (
+        <div
+          className="filter-hover-zone"
+          onMouseEnter={() => { markHintSeen('filters'); setIsSheetOpen(true); }}
+          aria-hidden="true"
+        />
+      )}
+
       {/* Картка товару — оверлей поверх каталогу: повернення зберігає позицію скролу */}
       {productId !== null && (
         <ProductPage
